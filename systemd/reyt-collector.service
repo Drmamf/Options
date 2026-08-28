@@ -8,11 +8,11 @@ Requires=mysql.service
 Type=simple
 User=reyt
 Group=reyt
-WorkingDirectory=/opt/reyt/collector
+WorkingDirectory=/opt/reyt-github/collector
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-Environment=OPTIONS_CONFIG_FILE=/opt/reyt/collector/settings.ini
-ExecStart=/opt/reyt/venv/bin/python /opt/reyt/collector/ReyT_collector_unified_optimized.py
+Environment=OPTIONS_CONFIG_FILE=/etc/reyt/collector/settings.ini
+ExecStart=/opt/reyt-venv/bin/python /opt/reyt-github/collector/ReyT_collector_unified_optimized.py
 Restart=on-failure
 RestartSec=10
 KillSignal=SIGTERM
