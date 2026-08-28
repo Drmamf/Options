@@ -1,0 +1,37 @@
+# ReyT - secrets and local runtime configuration
+.env
+.env.*
+!.env.example
+settings.ini
+**/settings.ini
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Runtime state / databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs and generated reports
+*.log
+bale_reports/
+reports/
+**/reports/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary / backup files
+*.tmp
+*.bak
+*.swp
+*~

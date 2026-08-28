@@ -1,0 +1,22 @@
+[Unit]
+Description=ReyT TSETMC Options Collector
+After=network-online.target mysql.service
+Wants=network-online.target
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=reyt
+Group=reyt
+WorkingDirectory=/opt/reyt/collector
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=OPTIONS_CONFIG_FILE=/opt/reyt/collector/settings.ini
+ExecStart=/opt/reyt/venv/bin/python /opt/reyt/collector/ReyT_collector_unified_optimized.py
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

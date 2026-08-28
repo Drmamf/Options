@@ -1,0 +1,22 @@
+[Unit]
+Description=ReyT Bale Notification Service
+After=network-online.target mysql.service reyt-strategy.service
+Wants=network-online.target
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=reyt
+Group=reyt
+WorkingDirectory=/opt/reyt/bale
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=OPTIONS_CONFIG_FILE=/opt/reyt/bale/settings.ini
+ExecStart=/opt/reyt/venv/bin/python /opt/reyt/bale/ReyT_bale_notifier_unified.py --watch
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

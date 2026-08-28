@@ -1,0 +1,68 @@
+ReyT FINAL LOCKED RUNTIME PROFILE — 2026-08-16
+================================================
+
+This archive is the deployment reference for the final agreed runtime behavior.
+Secrets are intentionally excluded.
+
+PAPER ACCOUNT
+- account_name = paper_1b_toman
+- initial capital = 1,000,000,000 toman
+- final VWAP Max Loss minimum per new position = 2,000,000 toman
+- final VWAP Max Loss maximum per new position = 10,000,000 toman
+- maximum OPEN capital allocation per strategy = 30% of initial capital = 300,000,000 toman
+- no aggregate total-risk cap
+- no daily-trade-count cap
+- no underlying-symbol cap
+
+ENTRY / EXECUTION
+- DTE filter = 5..180 days
+- Score floor = OFF; score is ranking/context only
+- Expected Return hurdle = equivalent of 40% effective annual
+- History AND IV models must both pass
+- both Expected Return models are rechecked after final 5-level VWAP
+- entry Order Book maximum age = 150 seconds
+- mark/valuation Order Book maximum age = 900 seconds
+- unbalanced partial fills are not allowed
+- shared Order Book depth is consumed across signals in the same scan
+- if final VWAP Max Loss < 2,000,000 toman: NOT_EXECUTED / MIN_EXECUTION_RISK_NOT_MET
+
+HISTORY / IV / GREEKS
+- initial historical request = 252 rows once
+- no history pruning
+- 13:00 Tehran = append/UPSERT at most one completed daily row per instrument
+- Expected Return history rows = latest 252
+- minimum required historical returns = 90
+- current option IV is used for IV model
+- Greeks risk-free rate = 40% (0.40)
+
+FEES
+- underlying buy = 0.3712%
+- underlying sell = 0.88%
+- option buy = 0.103%
+- option sell = 0.103%
+- option expiry/exercise = 0.05%
+
+BALE
+- BALE_SIGNAL_MODE = executed_only
+- immediate messages = EXECUTED only
+- NOT_EXECUTED remains in MySQL / CSV / EOD analytics and is not pushed immediately
+- 08:30 Tehran = open-position/account snapshot on market days
+- 13:00 Tehran = end-of-day snapshot + CSV on market days
+- deleting the Bale SQLite state replays today's EXECUTED signals once; do not delete the Python source
+
+MARKET / SERVICES
+- market days = Saturday through Wednesday
+- market hours = 09:00..12:30 Tehran
+- Collector EOD history action = 13:00 Tehran
+- systemd services = reyt-collector, reyt-strategy, reyt-bale
+- services are intended to be enabled at boot
+
+RESET POLICY
+- recommended reset: tools/reset_trading_state_preserve_market.sh
+- this clears Paper account/positions/signals/Bale state but preserves market data/history/Greeks/contracts
+- destructive full reset: tools/reset_all_data.sh only when a complete market/history bootstrap is intentionally required
+
+SECRETS
+- MYSQL_PASSWORD, BALE_BOT_TOKEN and BALE_CHAT_ID are NOT included in this archive.
+- On an existing VPS, tools/apply_final_settings.py preserves the existing secrets from settings.ini.
+- On a fresh VPS, those secrets must be supplied before starting the services.

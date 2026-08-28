@@ -1,0 +1,23 @@
+[Unit]
+Description=ReyT Options Strategy and Paper Trading Engine
+After=network-online.target mysql.service reyt-collector.service
+Wants=network-online.target
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=reyt
+Group=reyt
+WorkingDirectory=/opt/reyt/strategy
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=OPTIONS_CONFIG_FILE=/opt/reyt/strategy/settings.ini
+# IMPORTANT: current VPS service path keeps the v2 filename, but this file's contents are the current v3 ITM build.
+ExecStart=/opt/reyt/venv/bin/python /opt/reyt/strategy/ReyT_strategy_engine_unified_1b_execution_status_v2.py --watch --interval 1
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target
