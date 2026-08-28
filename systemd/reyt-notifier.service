@@ -1,0 +1,25 @@
+[Unit]
+Description=ReyT Telegram Primary Notifier with Bale Fallback
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reyt
+Group=reyt
+
+WorkingDirectory=/opt/reyt-github/bale
+
+Environment=HOME=/var/lib/reyt
+Environment=PYTHONUNBUFFERED=1
+Environment=OPTIONS_CONFIG_FILE=/etc/reyt/bale/settings.ini
+Environment=TELEGRAM_CONFIG_FILE=/etc/reyt/telegram/settings.ini
+Environment=TELEGRAM_CFW_SESSION=/var/lib/reyt/telegram/cfw.session
+
+ExecStart=/opt/reyt-venv/bin/python /opt/reyt-github/bale/ReyT_telegram_primary_notifier.py --watch
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
