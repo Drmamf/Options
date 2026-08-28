@@ -799,6 +799,22 @@ def format_executed_leg(leg: Mapping[str, Any]) -> str:
     )
 
 
+# Covered Call 50% annualized-return policy
+EXECUTION_REASON_FA.update({
+    "ANNUALIZED_RETURN_BELOW_50PCT":
+        "بازده سالانه‌شده کاورد کال کمتر از حداقل ۵۰٪ است",
+    "VWAP_ANNUALIZED_RETURN_BELOW_50PCT":
+        "بازده سالانه‌شده پس از قیمت اجرای واقعی کمتر از ۵۰٪ شده است",
+    "MIN_NET_CAPITAL_NOT_MET":
+        "سرمایه خالص قابل اجرا کمتر از حداقل ۲ میلیون تومان است",
+    "ONE_UNIT_EXCEEDS_MAX_NET_CAPITAL":
+        "حتی یک واحد کامل معامله بیش از سقف ۱۰ میلیون تومان سرمایه نیاز دارد",
+    "MAX_NET_CAPITAL_EXCEEDED":
+        "سرمایه خالص معامله از سقف ۱۰ میلیون تومان بیشتر است",
+    "VWAP_MAX_NET_CAPITAL_EXCEEDED":
+        "پس از اعمال قیمت واقعی Order Book، سرمایه از سقف ۱۰ میلیون تومان عبور کرده است",
+})
+
 def format_signal_message(
     row: Mapping[str, Any],
     executed_legs: Sequence[Mapping[str, Any]] = (),
@@ -811,12 +827,22 @@ def format_signal_message(
     status_line = "✅ روی حساب فرضی ۱ میلیاردی اجرا شد" if executed else "⛔ روی حساب فرضی اجرا نشد"
 
     details = signal_details(row)
+    strategy_code = str(row.get("strategy_code") or "")
+    is_covered_call = strategy_code == "COVERED_CALL"
+
     hist_er = details.get("history_expected_return_to_expiry_pct")
     iv_er = details.get("iv_expected_return_to_expiry_pct")
     required_er = details.get("required_return_to_expiry_pct")
     effective_iv = details.get("effective_iv_pct")
     exec_hist_er = details.get("execution_history_expected_return_to_expiry_pct")
     exec_iv_er = details.get("execution_iv_expected_return_to_expiry_pct")
+
+    # Temporary Covered-Call-only policy fields
+    signal_annualized_er = details.get("annualized_return_pct")
+    execution_annualized_er = details.get("execution_annualized_return_pct")
+    min_annualized_er = details.get("covered_call_min_annualized_return_pct")
+    if min_annualized_er is None:
+        min_annualized_er = 50
 
     lines = [
         header,
@@ -825,22 +851,69 @@ def format_signal_message(
         f"سررسید: {text_or_dash(row.get('expiry_date'))} | DTE: {int(row.get('days_to_expiry') or 0)} روز",
         f"Score: {fmt_num(row.get('strategy_score'), 2)} | Liquidity: {fmt_num(row.get('liquidity_score'), 2)}",
         f"Reward/Risk: {fmt_num(row.get('reward_risk_ratio'), 3)}",
-        f"بازده انتظاری History تا سررسید: {fmt_num(hist_er, 2)}٪",
-        f"بازده انتظاری IV تا سررسید: {fmt_num(iv_er, 2)}٪",
-        f"حدنصاب معادل ۴۰٪ سالانه برای این DTE: {fmt_num(required_er, 2)}٪",
-        f"IV مؤثر ساختار: {fmt_num(effective_iv, 2)}٪",
+    ]
+
+    if is_covered_call:
+        threshold_value = (
+            execution_annualized_er
+            if executed and execution_annualized_er is not None
+            else signal_annualized_er
+        )
+        try:
+            threshold_ok = float(threshold_value) >= float(min_annualized_er)
+        except (TypeError, ValueError):
+            threshold_ok = False
+
+        lines.extend([
+            f"بازده سالانه‌شده سیگنال: {fmt_num(signal_annualized_er, 2)}٪",
+        ])
+
+        if executed:
+            lines.append(
+                f"بازده سالانه‌شده اجرای واقعی: "
+                f"{fmt_num(execution_annualized_er, 2)}٪"
+            )
+
+        lines.append(
+            f"حداقل بازده موردنیاز: "
+            f"{fmt_num(min_annualized_er, 2)}٪ "
+            f"{'✅' if threshold_ok else '⛔'}"
+        )
+    else:
+        lines.extend([
+            f"بازده انتظاری History تا سررسید: {fmt_num(hist_er, 2)}٪",
+            f"بازده انتظاری IV تا سررسید: {fmt_num(iv_er, 2)}٪",
+            f"حدنصاب معادل ۴۰٪ سالانه برای این DTE: {fmt_num(required_er, 2)}٪",
+            f"IV مؤثر ساختار: {fmt_num(effective_iv, 2)}٪",
+        ])
+
+    lines.extend([
         "",
         format_candidate_leg(row, 1),
         format_candidate_leg(row, 2),
         "",
-        f"ریسک پیشنهادی: {fmt_money_toman(row.get('recommended_risk_rial'))} تومان",
-        f"سرمایه پیشنهادی: {fmt_money_toman(row.get('recommended_capital_rial'))} تومان",
+    ])
+
+    if is_covered_call:
+        lines.append(
+            f"سرمایه خالص پیشنهادی: "
+            f"{fmt_money_toman(row.get('recommended_capital_rial'))} تومان"
+        )
+    else:
+        lines.extend([
+            f"ریسک پیشنهادی: {fmt_money_toman(row.get('recommended_risk_rial'))} تومان",
+            f"سرمایه پیشنهادی: {fmt_money_toman(row.get('recommended_capital_rial'))} تومان",
+        ])
+
+    lines.extend([
         f"حجم پیشنهادی: {int(row.get('recommended_units') or 0)}",
         "",
         status_line,
-    ]
+    ])
 
-    if exec_hist_er is not None or exec_iv_er is not None:
+    if (not is_covered_call) and (
+        exec_hist_er is not None or exec_iv_er is not None
+    ):
         lines.extend([
             f"بازده History بعد از VWAP: {fmt_num(exec_hist_er, 2)}٪",
             f"بازده IV بعد از VWAP: {fmt_num(exec_iv_er, 2)}٪",
@@ -851,10 +924,20 @@ def format_signal_message(
             [
                 f"Position ID: #{int(row.get('opened_position_id') or 0)}",
                 f"حجم اجرای واقعی: {int(row.get('paper_executed_units') or 0)}",
-                f"سرمایه واقعی درگیر: {fmt_money_toman(row.get('paper_entry_capital_rial'))} تومان",
-                f"Max Loss واقعی: {fmt_money_toman(row.get('paper_entry_max_loss_rial'))} تومان",
             ]
         )
+
+        if is_covered_call:
+            lines.append(
+                f"سرمایه خالص واقعی درگیر: "
+                f"{fmt_money_toman(row.get('paper_entry_capital_rial'))} تومان"
+            )
+        else:
+            lines.extend([
+                f"سرمایه واقعی درگیر: {fmt_money_toman(row.get('paper_entry_capital_rial'))} تومان",
+                f"Max Loss واقعی: {fmt_money_toman(row.get('paper_entry_max_loss_rial'))} تومان",
+            ])
+
         if executed_legs:
             lines.append("قیمت اجرای واقعی از Order Book:")
             lines.extend(format_executed_leg(x) for x in executed_legs)
@@ -993,7 +1076,7 @@ class ReyTBaleNotifier:
         caption = (
             f"📎 CSV کامل Paper Trading تا پایان {d.isoformat()}\n"
             f"تعداد ردیف سیگنال: {count:,}\n"
-            "شامل هر ۵ استراتژی + وضعیت اجرا روی حساب فرضی + علت عدم اجرا"
+            "استراتژی فعال: کاورد کال\nشامل وضعیت اجرا روی حساب فرضی + علت عدم اجرا + اطلاعات Paper Trading"
         )
         await self.bale.send_document(path, caption=caption)
         return path, count
