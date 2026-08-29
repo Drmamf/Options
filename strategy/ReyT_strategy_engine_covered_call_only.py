@@ -14,11 +14,11 @@ temporary trading policy requested on 2026-08-17:
   * Position sizing is based on Covered Call NET CAPITAL, not generic max-loss:
         stock buy cash cost (including buy fee)
       - option sale proceeds (after option-sale fee)
-  * Maximum final net capital: 10,000,000 toman.
-  * Minimum final net capital:  2,000,000 toman.
-  * Integer contract granularity is preserved. A 12M candidate is reduced to the
-    largest whole-contract size whose net capital is <= 10M. If one whole
-    strategy unit itself exceeds 10M, it is not executed.
+  * Maximum final net capital: 1,000,000 toman.
+  * Minimum final net capital:  200,000 toman.
+  * Integer contract granularity is preserved. A 1.2M candidate is reduced to the
+    largest whole-contract size whose net capital is <= 1M. If one whole
+    strategy unit itself exceeds 1M, it is not executed.
   * Gross underlying purchase still must be affordable before option premium is
     credited, preserving the base engine's cash-safety rule.
   * Old dual history/IV expected-return gate is replaced by the explicit
@@ -32,12 +32,12 @@ Usage:
 
 Optional settings.ini values (under [strategy] or [paper]):
   PAPER_CC_MIN_ANNUALIZED_RETURN_PCT = 50
-  PAPER_CC_MAX_NET_CAPITAL_TOMAN = 10000000
-  PAPER_CC_MIN_NET_CAPITAL_TOMAN = 2000000
+  PAPER_CC_MAX_NET_CAPITAL_TOMAN = 1000000
+  PAPER_CC_MIN_NET_CAPITAL_TOMAN = 200000
   REYT_BASE_ENGINE = /opt/reyt/strategy/ReyT_strategy_engine_unified_1b_execution_status_v2.py
 
 The schema is deliberately NOT changed. Legacy table/column names such as
-risk_budget_rial remain for compatibility; in this mode the 10M cap represented
+risk_budget_rial remain for compatibility; in this mode the 1M cap represented
 there is the Covered Call net-capital cap.
 """
 from __future__ import annotations
@@ -89,11 +89,29 @@ MIN_ANNUALIZED_RETURN_PCT = base._decimal_setting(
     "PAPER_CC_MIN_ANNUALIZED_RETURN_PCT", "50"
 )
 MAX_NET_CAPITAL_TOMAN = base._decimal_setting(
-    "PAPER_CC_MAX_NET_CAPITAL_TOMAN", "10000000"
+    "PAPER_CC_MAX_NET_CAPITAL_TOMAN", "1000000"
 )
 MIN_NET_CAPITAL_TOMAN = base._decimal_setting(
-    "PAPER_CC_MIN_NET_CAPITAL_TOMAN", "2000000"
+    "PAPER_CC_MIN_NET_CAPITAL_TOMAN", "200000"
 )
+def _normalize_symbol(value: Any) -> str:
+    return (
+        str(value or "")
+        .strip()
+        .replace("\u200c", "")
+        .replace("ي", "ی")
+        .replace("ك", "ک")
+    )
+
+
+PAPER_ALLOWED_UNDERLYINGS = {
+    _normalize_symbol(x)
+    for x in base._setting(
+        "PAPER_ALLOWED_UNDERLYINGS",
+        "اهرم,وبملت,شپنا,فملی,شستا",
+    ).split(",")
+    if _normalize_symbol(x)
+}
 MAX_NET_CAPITAL_RIAL = MAX_NET_CAPITAL_TOMAN * base.TOMAN_TO_RIAL
 MIN_NET_CAPITAL_RIAL = MIN_NET_CAPITAL_TOMAN * base.TOMAN_TO_RIAL
 
@@ -324,7 +342,7 @@ base.PaperEngine._non_entry_reason = staticmethod(_cc_only_non_entry_reason)
 
 
 # ---------------------------------------------------------------------------
-# 5) Execution plan: size by NET CAPITAL [2M, 10M], then re-check 50% at VWAP.
+# 5) Execution plan: size by NET CAPITAL [200K, 1M], then re-check 50% at VWAP.
 # ---------------------------------------------------------------------------
 
 def _cc_only_plan_execution(
@@ -350,7 +368,7 @@ def _cc_only_plan_execution(
         return base.ExecutionDecision(
             None,
             "ONE_UNIT_EXCEEDS_MAX_NET_CAPITAL",
-            "One whole Covered Call unit exceeds the 10M toman net-capital cap.",
+            "One whole Covered Call unit exceeds the 1M toman net-capital cap.",
         )
 
     for leg in c.legs:
@@ -387,7 +405,7 @@ def _cc_only_plan_execution(
         return base.ExecutionDecision(
             None,
             "MAX_NET_CAPITAL_EXCEEDED",
-            "10M toman net-capital cap cannot fund one whole unit.",
+            "1M toman net-capital cap cannot fund one whole unit.",
         )
 
     cash_units = live_exec
@@ -472,7 +490,7 @@ def _cc_only_plan_execution(
                 return base.ExecutionDecision(
                     None,
                     "VWAP_MAX_NET_CAPITAL_EXCEEDED",
-                    "VWAP/slippage pushes one whole unit above the 10M "
+                    "VWAP/slippage pushes one whole unit above the 1M "
                     "toman net-capital cap.",
                 )
             return base.ExecutionDecision(
@@ -528,7 +546,7 @@ def _cc_only_plan_execution(
             "MAX_NET_CAPITAL_EXCEEDED",
             f"Final net capital "
             f"{base.money(final_net_capital/base.TOMAN_TO_RIAL):,.0f} toman "
-            "exceeds the 10M toman cap.",
+            "exceeds the 1M toman cap.",
         )
 
     if final_net_capital < MIN_NET_CAPITAL_RIAL - Decimal("0.01"):
@@ -537,7 +555,7 @@ def _cc_only_plan_execution(
             "MIN_NET_CAPITAL_NOT_MET",
             f"Final net capital "
             f"{base.money(final_net_capital/base.TOMAN_TO_RIAL):,.0f} toman "
-            "is below the 2M toman minimum.",
+            "is below the 200K toman minimum.",
         )
 
     if final_net_capital > available_cash + Decimal("0.01"):
@@ -646,7 +664,19 @@ async def _cc_only_auto_open(
                 db, c, "NOT_EXECUTED", now, code, reason
             )
             continue
-
+        if _normalize_symbol(c.underlying_symbol) not in PAPER_ALLOWED_UNDERLYINGS:
+            await self._set_signal_execution_status(
+                db,
+                c,
+                "NOT_EXECUTED",
+                now,
+                "PAPER_UNDERLYING_NOT_ALLOWED",
+                (
+                    f"Underlying {c.underlying_symbol} is outside the allowed "
+                    "paper-account universe."
+                ),
+            )
+            continue
         # No score threshold here. 50% annualized is the economic gate.
         eligible.append(c)
 

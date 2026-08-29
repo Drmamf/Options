@@ -122,10 +122,10 @@ MYSQL_POOL_MAX = _int_setting("STRATEGY_DB_POOL_MAX", 5, MYSQL_POOL_MIN)
 MYSQL_TIME_ZONE = _setting("MYSQL_TIME_ZONE", "+03:30")
 
 TOMAN_TO_RIAL = Decimal("10")
-ACCOUNT_NAME = _setting("PAPER_ACCOUNT_NAME", "paper_1b_toman")
-INITIAL_CAPITAL_TOMAN = _decimal_setting("PAPER_INITIAL_CAPITAL_TOMAN", "1000000000")
-FIXED_RISK_PER_TRADE_TOMAN = _decimal_setting("PAPER_FIXED_RISK_PER_TRADE_TOMAN", "10000000")
-MIN_EXECUTION_RISK_TOMAN = _decimal_setting("PAPER_MIN_EXECUTION_RISK_TOMAN", "2000000")
+ACCOUNT_NAME = _setting("PAPER_ACCOUNT_NAME", "paper_100m_toman")
+INITIAL_CAPITAL_TOMAN = _decimal_setting("PAPER_INITIAL_CAPITAL_TOMAN", "100000000")
+FIXED_RISK_PER_TRADE_TOMAN = _decimal_setting("PAPER_FIXED_RISK_PER_TRADE_TOMAN", "1000000")
+MIN_EXECUTION_RISK_TOMAN = _decimal_setting("PAPER_MIN_EXECUTION_RISK_TOMAN", "200000")
 MAX_STRATEGY_ALLOCATION_PCT = _decimal_setting("PAPER_MAX_STRATEGY_ALLOCATION_PCT", "30")
 INITIAL_CAPITAL_RIAL = INITIAL_CAPITAL_TOMAN * TOMAN_TO_RIAL
 FIXED_RISK_PER_TRADE_RIAL = FIXED_RISK_PER_TRADE_TOMAN * TOMAN_TO_RIAL
@@ -1042,9 +1042,10 @@ def liquidity_score(legs: Sequence[Leg], books: Mapping[str, OrderBook], now: da
 
 
 def make_signal_key(strategy: str, ua: str, legs: Sequence[Leg], signal_date: date) -> str:
-    # One logical structure per Tehran trading day. Collector refreshes UPSERT
-    # the same row rather than creating a new row every market-data revision.
-    payload = strategy + "|" + ua + "|" + "|".join(
+    # One logical structure per paper account and Tehran trading day.
+    # Including ACCOUNT_NAME prevents a fresh paper-account generation from
+    # colliding with immutable historical signal rows from older accounts.
+    payload = ACCOUNT_NAME + "|" + strategy + "|" + ua + "|" + "|".join(
         f"{x.side}:{x.ins_code}" for x in legs
     ) + "|" + signal_date.isoformat()
     digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()
@@ -1178,30 +1179,55 @@ class PaperEngine:
                   "or create the database with the V2 execution-status schema first."
             )
 
-    async def _reconcile_legacy_signal_execution_status(self, db: DB) -> None:
-        """Backfill rows created before execution-status columns existed.
 
-        A signal linked to a paper position is definitively EXECUTED. Historical
-        rows with no linked paper position are definitively not executed on the
-        shared account. New signals are inserted later in the scan, so this
-        startup reconciliation cannot race with a fresh PENDING decision.
+    async def _reconcile_legacy_signal_execution_status(self, db: DB) -> None:
+        """Reconcile execution status ONLY for the currently configured paper account.
+
+        Historical rows belonging to older paper-account generations are immutable
+        and must never be modified by a new account startup.
         """
+        account_row = await db.fetchrow(
+            f"""
+            SELECT account_id
+            FROM {qname('paper_strategy_account')}
+            WHERE account_name=%s
+            """,
+            (ACCOUNT_NAME,),
+        )
+        if not account_row:
+            raise RuntimeError(f"Paper account not found for reconciliation: {ACCOUNT_NAME}")
+
+        account_id = int(account_row["account_id"])
+
         for table_name in STRATEGY_TABLES.values():
             table = qname(table_name)
+
             await db.execute(
                 f"""
                 UPDATE {table} s
-                JOIN {qname('paper_positions')} p ON p.position_id=s.opened_position_id
+                JOIN {qname('paper_positions')} p
+                ON p.position_id=s.opened_position_id
+                AND p.account_id=%s
                 SET s.executed_on_paper_account=1,
                     s.paper_execution_status='EXECUTED',
                     s.paper_execution_reason_code='POSITION_OPENED',
                     s.paper_execution_reason='Paper position exists for this signal.',
-                    s.paper_execution_checked_at=COALESCE(s.paper_execution_checked_at,p.opened_at),
-                    s.paper_executed_at=COALESCE(s.paper_executed_at,p.opened_at)
-                WHERE s.opened_position_id IS NOT NULL
-                  AND (s.paper_execution_status<>'EXECUTED' OR s.executed_on_paper_account<>1)
-                """
+                    s.paper_execution_checked_at=COALESCE(
+                        s.paper_execution_checked_at,p.opened_at
+                    ),
+                    s.paper_executed_at=COALESCE(
+                        s.paper_executed_at,p.opened_at
+                    )
+                WHERE s.account_id=%s
+                AND s.opened_position_id IS NOT NULL
+                AND (
+                        s.paper_execution_status<>'EXECUTED'
+                        OR s.executed_on_paper_account<>1
+                    )
+                """,
+                (account_id, account_id),
             )
+
             await db.execute(
                 f"""
                 UPDATE {table}
@@ -1209,10 +1235,14 @@ class PaperEngine:
                     paper_execution_status='NOT_EXECUTED',
                     paper_execution_reason_code='LEGACY_NO_PAPER_POSITION',
                     paper_execution_reason='Historical signal has no linked paper position.',
-                    paper_execution_checked_at=COALESCE(paper_execution_checked_at,updated_at)
-                WHERE opened_position_id IS NULL
-                  AND paper_execution_status='PENDING'
-                """
+                    paper_execution_checked_at=COALESCE(
+                        paper_execution_checked_at,updated_at
+                    )
+                WHERE account_id=%s
+                AND opened_position_id IS NULL
+                AND paper_execution_status='PENDING'
+                """,
+                (account_id,),
             )
 
     async def _ensure_account(self, db: DB) -> None:
@@ -2426,11 +2456,14 @@ class PaperEngine:
                     opened_position_id=%s,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE signal_id=%s
-                """,
+                AND account_id=(
+                    SELECT account_id
+                    FROM paper_strategy_account
+                    WHERE account_name=%s
+                )                """,
                 (json.dumps(c.details, ensure_ascii=False, default=json_default),
-                 reason_code or "POSITION_OPENED", reason or "Opened on shared paper account.",
-                 now, now, position_id, c.signal_id),
-            )
+                reason_code or "POSITION_OPENED", reason or "Opened on shared paper account.",
+                now, now, position_id, c.signal_id, ACCOUNT_NAME),            )
             return
         if status != "NOT_EXECUTED":
             raise ValueError(f"Unsupported execution status: {status}")
@@ -2447,11 +2480,15 @@ class PaperEngine:
                 paper_executed_at=NULL,
                 updated_at=CURRENT_TIMESTAMP
             WHERE signal_id=%s
-              AND opened_position_id IS NULL
-              AND paper_execution_status<>'EXECUTED'
+            AND account_id=(
+                SELECT account_id
+                FROM paper_strategy_account
+                WHERE account_name=%s
+            )
+            AND opened_position_id IS NULL
+            AND paper_execution_status<>'EXECUTED'
             """,
-            (json.dumps(c.details, ensure_ascii=False, default=json_default), reason_code, reason, now, c.signal_id),
-        )
+            (json.dumps(c.details, ensure_ascii=False, default=json_default), reason_code, reason, now, c.signal_id, ACCOUNT_NAME),        )
 
     @staticmethod
     def _non_entry_reason(c: Candidate) -> Tuple[str, str]:

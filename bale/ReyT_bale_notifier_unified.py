@@ -99,7 +99,7 @@ MYSQL_CONNECT_TIMEOUT = _int_setting("MYSQL_CONNECT_TIMEOUT", 20, 1)
 MYSQL_SSL = _bool_setting("MYSQL_SSL", False)
 MYSQL_TIME_ZONE = _setting("MYSQL_TIME_ZONE", "+03:30")
 
-PAPER_ACCOUNT_NAME = _setting("PAPER_ACCOUNT_NAME", "paper_1b_toman")
+PAPER_ACCOUNT_NAME = _setting("PAPER_ACCOUNT_NAME", "paper_100m_toman")
 
 BALE_BOT_TOKEN = _setting("BALE_BOT_TOKEN", "")
 BALE_CHAT_ID = _setting("BALE_CHAT_ID", "")
@@ -641,31 +641,37 @@ class Repository:
 
     async def max_signal_updated_at(self) -> Optional[datetime]:
         row = await self.fetchone(
-            "SELECT MAX(updated_at) AS max_updated_at FROM vw_all_strategy_signals"
+            """
+            SELECT MAX(s.updated_at) AS max_updated_at
+            FROM vw_all_strategy_signals s
+            JOIN paper_strategy_account a
+            ON a.account_id=s.account_id
+            WHERE a.account_name=%s
+            """,
+            (PAPER_ACCOUNT_NAME,),
         )
         value = row.get("max_updated_at") if row else None
         return value if isinstance(value, datetime) else None
 
     async def changed_signals(self, since: datetime) -> List[Dict[str, Any]]:
-        """Fetch actionable signal rows changed since watermark, paginated by LIMIT.
-
-        The overlap window is deliberate; SQLite state makes the operation
-        idempotent and protects against MySQL DATETIME second-level ties.
-        """
+        """Fetch actionable signal rows changed since watermark for this paper account."""
         results: List[Dict[str, Any]] = []
         offset = 0
         while True:
             rows = await self.fetchall(
                 f"""
-                SELECT *
-                FROM vw_all_strategy_signals
-                WHERE updated_at >= %s
-                  AND final_signal IN ('CANDIDATE','STRONG_CANDIDATE')
-                  AND paper_execution_status IN ('EXECUTED','NOT_EXECUTED')
-                ORDER BY updated_at, scan_time, signal_source_table, signal_id
+                SELECT s.*
+                FROM vw_all_strategy_signals s
+                JOIN paper_strategy_account a
+                  ON a.account_id=s.account_id
+                WHERE s.updated_at >= %s
+                  AND a.account_name=%s
+                  AND s.final_signal IN ('CANDIDATE','STRONG_CANDIDATE')
+                  AND s.paper_execution_status IN ('EXECUTED','NOT_EXECUTED')
+                ORDER BY s.updated_at, s.scan_time, s.signal_source_table, s.signal_id
                 LIMIT {BALE_QUERY_BATCH_SIZE} OFFSET {offset}
                 """,
-                (since,),
+                (since, PAPER_ACCOUNT_NAME),
             )
             results.extend(rows)
             if len(rows) < BALE_QUERY_BATCH_SIZE:
@@ -824,8 +830,7 @@ def format_signal_message(
     reason_code = str(row.get("paper_execution_reason_code") or "")
     reason = EXECUTION_REASON_FA.get(reason_code) or text_or_dash(row.get("paper_execution_reason"))
     header = "🔄 بروزرسانی اجرای سیگنال" if status_update else "🔔 سیگنال جدید ReyT"
-    status_line = "✅ روی حساب فرضی ۱ میلیاردی اجرا شد" if executed else "⛔ روی حساب فرضی اجرا نشد"
-
+    status_line = "✅ روی حساب فرضی اجرا شد" if executed else "⛔ روی حساب فرضی اجرا نشد"
     details = signal_details(row)
     strategy_code = str(row.get("strategy_code") or "")
     is_covered_call = strategy_code == "COVERED_CALL"

@@ -58,12 +58,13 @@ p = ensure(cfg, "paper")
 for legacy in ["paper_option_settlement_fee_pct", "paper_option_exercise_fee_pct"]:
     p.pop(legacy, None)
 for k, v in {
-    "paper_account_name":"paper_1b_toman",
-    "paper_initial_capital_toman":"1000000000",
+    "paper_account_name":"paper_100m_toman",
+    "paper_initial_capital_toman":"100000000",
     "paper_max_strategy_allocation_pct":"30",
-    "paper_fixed_risk_per_trade_toman":"10000000",
-    "paper_min_execution_risk_toman":"2000000",
+    "paper_fixed_risk_per_trade_toman":"1000000",
+    "paper_min_execution_risk_toman":"200000",
     "paper_auto_trade":"yes",
+    "paper_allowed_underlyings":"اهرم,وبملت,شپنا,فملی,شستا",
     "paper_auto_trade_min_score":"60",
     "paper_min_days_to_expiry":"5", "paper_max_days_to_expiry":"180",
     "paper_max_strike_steps":"4",
@@ -92,7 +93,7 @@ save(cfg, FILES["strategy"])
 cfg = load(FILES["bale"])
 b = ensure(cfg, "bale")
 for k, v in {
-    "paper_account_name":"paper_1b_toman",
+    "paper_account_name":"paper_100m_toman",
     "bale_http_timeout":"30", "bale_http_retries":"4",
     "bale_signal_poll_seconds":"2", "bale_signal_overlap_seconds":"5",
     "bale_signal_mode":"executed_only",
