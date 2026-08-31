@@ -152,6 +152,7 @@ EXECUTION_REASON_FA = {
     "RISK_BUDGET_EXCEEDED": "ریسک معامله از سقف ۱۰ میلیون تومان عبور می‌کرد",
     "DTE_BELOW_MINIMUM": "کمتر از حداقل ۵ روز تا سررسید باقی مانده بود",
     "SCORE_BELOW_ENTRY_THRESHOLD": "امتیاز سیگنال از حداقل ورود پایین‌تر بود",
+    "CC_MIN_ITM_PCT_NOT_MET": "قیمت اعمال اختیار خرید به‌اندازه حداقل تعیین‌شده پایین‌تر از قیمت دارایی پایه نیست",
     "DUPLICATE_OPEN_SIGNATURE": "همین ساختار هنوز یک پوزیشن باز دارد",
     "AUTO_TRADE_DISABLED": "اجرای خودکار Paper Trading غیرفعال بود",
     "NO_EXECUTABLE_UNITS": "پس از اعمال ریسک، نقد و عمق بازار حجم قابل اجرا صفر شد",
