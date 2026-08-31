@@ -94,6 +94,11 @@ MAX_NET_CAPITAL_TOMAN = base._decimal_setting(
 MIN_NET_CAPITAL_TOMAN = base._decimal_setting(
     "PAPER_CC_MIN_NET_CAPITAL_TOMAN", "200000"
 )
+MIN_ITM_PCT = base._decimal_setting(
+    "PAPER_CC_MIN_ITM_PCT", "10"
+)
+if MIN_ITM_PCT < 0 or MIN_ITM_PCT >= 100:
+    raise RuntimeError("PAPER_CC_MIN_ITM_PCT must be between 0 and 100.")
 def _normalize_symbol(value: Any) -> str:
     return (
         str(value or "")
@@ -678,6 +683,37 @@ async def _cc_only_auto_open(
             )
             continue
         # No score threshold here. 50% annualized is the economic gate.
+        short_call = next(
+            (
+                leg for leg in c.legs
+                if leg.kind == "OPTION"
+                and leg.side == "SHORT"
+                and leg.option_type == "CALL"
+            ),
+            None,
+        )
+
+        max_allowed_strike = (
+            c.spot * (Decimal("1") - MIN_ITM_PCT / Decimal("100"))
+        )
+
+        if (
+            short_call is None
+            or short_call.strike is None
+            or short_call.strike > max_allowed_strike
+        ):
+            await self._set_signal_execution_status(
+                db,
+                c,
+                "NOT_EXECUTED",
+                now,
+                "CC_MIN_ITM_PCT_NOT_MET",
+                (
+                    f"Covered Call strike must be at least "
+                    f"{MIN_ITM_PCT}% below spot for paper execution."
+                ),
+            )
+            continue
         eligible.append(c)
 
     # Rank only after all hard gates. Prefer higher annualized return, then
@@ -795,6 +831,7 @@ async def _cc_only_open(self: Any) -> None:
     print(
         "   🟦 TEMP POLICY: COVERED_CALL ONLY | "
         f"annualized >= {MIN_ANNUALIZED_RETURN_PCT}% | "
+        f"min ITM depth >= {MIN_ITM_PCT}% | "
         f"net capital {MIN_NET_CAPITAL_TOMAN:,.0f}.."
         f"{MAX_NET_CAPITAL_TOMAN:,.0f} toman"
     )

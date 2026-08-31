@@ -63,6 +63,7 @@ for k, v in {
     "paper_max_strategy_allocation_pct":"30",
     "paper_fixed_risk_per_trade_toman":"1000000",
     "paper_min_execution_risk_toman":"200000",
+    "paper_cc_min_itm_pct":"10",
     "paper_auto_trade":"yes",
     "paper_allowed_underlyings":"اهرم,وبملت,شپنا,فملی,شستا",
     "paper_auto_trade_min_score":"60",
