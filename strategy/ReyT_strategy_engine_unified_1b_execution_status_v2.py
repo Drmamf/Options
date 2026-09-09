@@ -1477,6 +1477,7 @@ class PaperEngine:
             FROM {qname('daily_market_data')} d
             JOIN {qname('underlying_assets')} u ON u.ua_ins_code=d.ins_code
             WHERE COALESCE(NULLIF(d.close_price,0),NULLIF(d.last_price,0))>0
+              AND (COALESCE(d.volume,0)>0 OR COALESCE(d.trade_count,0)>0)
               AND d.trade_date>=DATE_SUB(CURDATE(),INTERVAL %s DAY)
             ORDER BY d.ins_code,d.trade_date
             """,
@@ -1513,6 +1514,7 @@ class PaperEngine:
             FROM {qname('daily_market_data')} d
             JOIN {qname('underlying_assets')} u ON u.ua_ins_code=d.ins_code
             WHERE COALESCE(NULLIF(d.close_price,0),NULLIF(d.last_price,0))>0
+              AND (COALESCE(d.volume,0)>0 OR COALESCE(d.trade_count,0)>0)
             ORDER BY d.ins_code,d.trade_date
             """
         )

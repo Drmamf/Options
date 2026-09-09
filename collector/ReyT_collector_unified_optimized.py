@@ -151,9 +151,11 @@ ORDER_BOOK_CONCURRENCY = _int_setting("COLLECTOR_ORDER_BOOK_CONCURRENCY", 30, 1)
 ORDER_BOOK_INCLUDE_UNDERLYINGS = _bool_setting("COLLECTOR_ORDER_BOOK_INCLUDE_UNDERLYINGS", True)
 SNAPSHOT_CONCURRENCY = _int_setting("COLLECTOR_UNDERLYING_CONCURRENCY", 8, 1)
 
-INITIAL_HISTORY_DAYS = _int_setting("COLLECTOR_INITIAL_HISTORY_DAYS", 252, 1)
+INITIAL_HISTORY_DAYS = _int_setting("COLLECTOR_INITIAL_HISTORY_DAYS", 450, 1)
 EOD_HISTORY_LOOKBACK_DAYS = _int_setting("COLLECTOR_EOD_HISTORY_LOOKBACK_DAYS", 7, 1)
 EOD_HISTORY_TIME = _parse_clock(_setting("COLLECTOR_EOD_HISTORY_TIME", "13:00"), time(13, 0))
+EOD_HISTORY_RETRY_SECONDS = _int_setting("COLLECTOR_EOD_HISTORY_RETRY_SECONDS", 600, 30)
+EOD_HISTORY_MAX_RETRIES = _int_setting("COLLECTOR_EOD_HISTORY_MAX_RETRIES", 36, 1)
 HISTORY_CONCURRENCY = _int_setting("COLLECTOR_HISTORY_CONCURRENCY", 4, 1)
 HISTORY_REQUEST_DELAY = _float_setting("COLLECTOR_HISTORY_REQUEST_DELAY", 0.20, 0.0)
 DB_DEADLOCK_RETRIES = _int_setting("COLLECTOR_DB_DEADLOCK_RETRIES", 5, 1)
@@ -1285,10 +1287,8 @@ class ReyTCollector:
     ) -> int:
         if not self.pool or not rows_by_code:
             return 0
-        successful_codes = [code for code, rows in rows_by_code.items() if rows]
+        successful_codes = list(rows_by_code)
         rows = [row for code in successful_codes for row in rows_by_code[code]]
-        if not rows:
-            return 0
         placeholders = ",".join(["%s"] * len(successful_codes))
         insert_sql = """
             INSERT INTO order_book_depth (
@@ -1307,7 +1307,8 @@ class ReyTCollector:
                         f"DELETE FROM order_book_depth WHERE ins_code IN ({placeholders})",
                         tuple(successful_codes),
                     )
-                    await cur.executemany(insert_sql, rows)
+                    if rows:
+                        await cur.executemany(insert_sql, rows)
                 await conn.commit()
             except Exception:
                 await conn.rollback()
@@ -1335,10 +1336,10 @@ class ReyTCollector:
                 errors += 1
                 continue
             code, payload = item
-            if payload:
-                rows = self.parse_order_book_rows(payload, code, snapshot_time)
-                if rows:
-                    rows_by_code[code] = rows
+            if payload is not None and isinstance(payload.get("bestLimits"), list):
+                rows_by_code[code] = self.parse_order_book_rows(
+                    payload, code, snapshot_time
+                )
         saved = await self.save_order_book_batch(rows_by_code)
         success = len(rows_by_code)
         print(
@@ -1570,20 +1571,20 @@ class ReyTCollector:
                         result[key] = last_date
         return result
 
-    async def eod_history_append_once(self) -> None:
-        """At/after 13:00 Tehran, append at most one newly completed daily row per instrument."""
+    async def eod_history_append_once(self) -> bool:
+        """Try one EOD append and return True only when today's history is confirmed."""
         now = tehran_now()
         if not self.is_market_day(now):
-            return
+            return True
         today = now.date().isoformat()
         await self.open_db()
         try:
             if await self.get_state("eod_history_last_sync") == today:
-                return
+                return True
             codes = await self.get_all_ins_codes()
             if not codes:
                 print(f"[{now:%H:%M:%S}] ⚠️ EOD history append skipped: no instruments.")
-                return
+                return False
             last_dates = await self.get_history_last_dates(codes)
             sem = asyncio.Semaphore(HISTORY_CONCURRENCY)
             saved = 0
@@ -1630,13 +1631,71 @@ class ReyTCollector:
                     await asyncio.gather(*(one(code) for code in chunk))
 
             if not self._shutdown:
-                await self.set_state("eod_history_last_sync", today)
+                async with self.pool.acquire() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """
+                            SELECT
+                                COUNT(DISTINCT CASE
+                                    WHEN d.trade_date=%s THEN u.ua_ins_code
+                                END) AS current_rows,
+                                COUNT(DISTINCT u.ua_ins_code) AS required_rows
+                            FROM underlying_assets u
+                            LEFT JOIN daily_market_data d
+                              ON d.ins_code=u.ua_ins_code
+                             AND d.trade_date=%s
+                            """,
+                            (now.date(), now.date()),
+                        )
+                        row = await cur.fetchone()
+                        current_underlying_rows = int(row[0] or 0) if row else 0
+                        required_underlying_rows = int(row[1] or 0) if row else 0
+
+                if (
+                    required_underlying_rows > 0
+                    and current_underlying_rows >= required_underlying_rows
+                ):
+                    await self.set_state("eod_history_last_sync", today)
+                    print(
+                        f"[{tehran_now():%H:%M:%S}] ✅ EOD history append complete "
+                        f"| appended={saved} | unchanged={unchanged} | failed={failed} "
+                        f"| today_underlyings={current_underlying_rows}/{required_underlying_rows} | pruning=OFF"
+                    )
+                    return True
+
                 print(
-                    f"[{tehran_now():%H:%M:%S}] ✅ EOD history append complete "
-                    f"| appended={saved} | unchanged={unchanged} | failed={failed} | pruning=OFF"
+                    f"[{tehran_now():%H:%M:%S}] ⚠️ EOD history not finalized "
+                    f"| appended={saved} | unchanged={unchanged} | failed={failed} "
+                    f"| today_underlyings={current_underlying_rows}/{required_underlying_rows} | state NOT advanced"
                 )
+                return False
+
+            return False
         finally:
             await self.close_db()
+
+    async def eod_history_append_with_retry(self) -> None:
+        for attempt in range(1, EOD_HISTORY_MAX_RETRIES + 1):
+            if self._shutdown:
+                return
+
+            complete = await self.eod_history_append_once()
+            if complete:
+                return
+
+            if attempt >= EOD_HISTORY_MAX_RETRIES:
+                print(
+                    f"[{tehran_now():%H:%M:%S}] ⚠️ EOD history still incomplete "
+                    f"after {attempt} attempts; will catch up on the next service/market cycle."
+                )
+                return
+
+            print(
+                f"[{tehran_now():%H:%M:%S}] ⏳ EOD history retry "
+                f"{attempt + 1}/{EOD_HISTORY_MAX_RETRIES} "
+                f"in {EOD_HISTORY_RETRY_SECONDS}s"
+            )
+            await self._sleep_or_shutdown(EOD_HISTORY_RETRY_SECONDS)
 
     async def wait_until_eod(self) -> bool:
         while not self._shutdown:
@@ -1816,14 +1875,14 @@ async def async_main(args: argparse.Namespace) -> None:
         # single EOD append once, then wait for the next market open.
         if collector.is_market_day(now) and now.time() >= EOD_HISTORY_TIME:
             try:
-                await collector.eod_history_append_once()
+                await collector.eod_history_append_with_retry()
             except Exception as exc:
                 print(f"[{tehran_now():%H:%M:%S}] ❌ EOD history error: {exc}")
 
         if collector.is_market_day(tehran_now()) and MARKET_CLOSE < tehran_now().time() < EOD_HISTORY_TIME:
             if await collector.wait_until_eod():
                 try:
-                    await collector.eod_history_append_once()
+                    await collector.eod_history_append_with_retry()
                 except Exception as exc:
                     print(f"[{tehran_now():%H:%M:%S}] ❌ EOD history error: {exc}")
             continue
@@ -1842,7 +1901,7 @@ async def async_main(args: argparse.Namespace) -> None:
         # post-market daily-history append at 13:00 Tehran.
         if not collector._shutdown and await collector.wait_until_eod():
             try:
-                await collector.eod_history_append_once()
+                await collector.eod_history_append_with_retry()
             except Exception as exc:
                 print(f"[{tehran_now():%H:%M:%S}] ❌ EOD history error: {exc}")
 
