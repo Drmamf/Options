@@ -17,6 +17,8 @@ Environment=REYT_BASE_ENGINE=/opt/reyt-github/strategy/ReyT_strategy_engine_unif
 
 # Independent paper account for Protective Put.
 Environment=PAPER_ACCOUNT_NAME=paper_100m_pp_itm10
+Environment=PAPER_INITIAL_CAPITAL_TOMAN=100000000
+Environment=PAPER_AUTO_TRADE=yes
 
 # Mirror of the active Covered Call paper policy.
 Environment=PAPER_PP_MIN_EXPECTED_ANNUALIZED_RETURN_PCT=50
