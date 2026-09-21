@@ -913,6 +913,13 @@ def format_signal_message(
         if is_covered_call
         else details.get("protective_put_itm_depth_pct")
     )
+    min_itm = (
+        details.get("covered_call_min_itm_pct", 10)
+        if is_covered_call
+        else details.get("protective_put_min_itm_pct", 10)
+        if is_protective_put
+        else None
+    )
 
     lines = [
         header,
@@ -923,8 +930,13 @@ def format_signal_message(
             f"DTE: {int(row.get('days_to_expiry') or 0)} روز"
         ),
         (
-            f"🎯 عمق ITM: {fmt_num(itm_depth, 2)}٪ | "
-            f"Score: {fmt_num(row.get('strategy_score'), 2)} | "
+            f"🎯 عمق ITM: {fmt_num(itm_depth, 2)}٪"
+            + (
+                f" / حداقل {fmt_num(min_itm, 2)}٪ | "
+                if min_itm is not None
+                else " | "
+            )
+            + f"Score: {fmt_num(row.get('strategy_score'), 2)} | "
             f"Liquidity: {fmt_num(row.get('liquidity_score'), 2)}"
         ),
     ]
