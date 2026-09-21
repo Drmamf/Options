@@ -100,6 +100,15 @@ MYSQL_SSL = _bool_setting("MYSQL_SSL", False)
 MYSQL_TIME_ZONE = _setting("MYSQL_TIME_ZONE", "+03:30")
 
 PAPER_ACCOUNT_NAME = _setting("PAPER_ACCOUNT_NAME", "paper_100m_toman")
+PAPER_ACCOUNT_NAMES = tuple(
+    dict.fromkeys(
+        x.strip()
+        for x in _setting("PAPER_ACCOUNT_NAMES", PAPER_ACCOUNT_NAME).split(",")
+        if x.strip()
+    )
+)
+if not PAPER_ACCOUNT_NAMES:
+    PAPER_ACCOUNT_NAMES = (PAPER_ACCOUNT_NAME,)
 
 BALE_BOT_TOKEN = _setting("BALE_BOT_TOKEN", "")
 BALE_CHAT_ID = _setting("BALE_CHAT_ID", "")
@@ -264,6 +273,7 @@ def logical_signal_key(row: Mapping[str, Any]) -> str:
     raw = "|".join(
         str(row.get(k) or "")
         for k in (
+            "paper_account_name", "account_id",
             "signal_date", "strategy_code", "ua_ins_code", "expiry_date",
             "leg1_kind", "leg1_ins_code", "leg1_side",
             "leg2_kind", "leg2_ins_code", "leg2_side",
@@ -596,7 +606,7 @@ class Repository:
                 await cur.execute(sql, tuple(params))
                 return [dict(x) for x in await cur.fetchall()]
 
-    async def account_snapshot(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, int]]:
+    async def account_snapshot(self, account_name: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, int]]:
         account = await self.fetchone(
             """
             SELECT account_id,account_name,initial_equity_rial,current_equity_rial,
@@ -605,10 +615,10 @@ class Repository:
             FROM paper_strategy_account
             WHERE account_name=%s
             """,
-            (PAPER_ACCOUNT_NAME,),
+            (account_name,),
         )
         if not account:
-            raise RuntimeError(f"Paper account not found: {PAPER_ACCOUNT_NAME}")
+            raise RuntimeError(f"Paper account not found: {account_name}")
         account_id = int(account["account_id"])
         by_strategy = await self.fetchall(
             """
@@ -641,38 +651,40 @@ class Repository:
         return account, by_strategy, sig_counts
 
     async def max_signal_updated_at(self) -> Optional[datetime]:
+        placeholders = ",".join(["%s"] * len(PAPER_ACCOUNT_NAMES))
         row = await self.fetchone(
-            """
+            f"""
             SELECT MAX(s.updated_at) AS max_updated_at
             FROM vw_all_strategy_signals s
             JOIN paper_strategy_account a
-            ON a.account_id=s.account_id
-            WHERE a.account_name=%s
+              ON a.account_id=s.account_id
+            WHERE a.account_name IN ({placeholders})
             """,
-            (PAPER_ACCOUNT_NAME,),
+            PAPER_ACCOUNT_NAMES,
         )
         value = row.get("max_updated_at") if row else None
         return value if isinstance(value, datetime) else None
 
     async def changed_signals(self, since: datetime) -> List[Dict[str, Any]]:
-        """Fetch actionable signal rows changed since watermark for this paper account."""
+        """Fetch actionable signal rows changed since watermark for monitored paper accounts."""
         results: List[Dict[str, Any]] = []
         offset = 0
+        placeholders = ",".join(["%s"] * len(PAPER_ACCOUNT_NAMES))
         while True:
             rows = await self.fetchall(
                 f"""
-                SELECT s.*
+                SELECT s.*, a.account_name AS paper_account_name
                 FROM vw_all_strategy_signals s
                 JOIN paper_strategy_account a
                   ON a.account_id=s.account_id
                 WHERE s.updated_at >= %s
-                  AND a.account_name=%s
+                  AND a.account_name IN ({placeholders})
                   AND s.final_signal IN ('CANDIDATE','STRONG_CANDIDATE')
                   AND s.paper_execution_status IN ('EXECUTED','NOT_EXECUTED')
                 ORDER BY s.updated_at, s.scan_time, s.signal_source_table, s.signal_id
                 LIMIT {BALE_QUERY_BATCH_SIZE} OFFSET {offset}
                 """,
-                (since, PAPER_ACCOUNT_NAME),
+                (since, *PAPER_ACCOUNT_NAMES),
             )
             results.extend(rows)
             if len(rows) < BALE_QUERY_BATCH_SIZE:
@@ -745,6 +757,7 @@ def format_account_snapshot(
 
     lines = [
         title,
+        f"🧾 حساب: {text_or_dash(account.get('account_name'))}",
         f"🕒 {now:%Y-%m-%d %H:%M} تهران",
         "",
         f"💼 سرمایه اولیه: {fmt_money_toman(initial)} تومان",
@@ -806,20 +819,42 @@ def format_executed_leg(leg: Mapping[str, Any]) -> str:
     )
 
 
-# Covered Call 50% annualized-return policy
+# Strategy-specific paper-policy reasons
 EXECUTION_REASON_FA.update({
     "ANNUALIZED_RETURN_BELOW_50PCT":
         "بازده سالانه‌شده کاورد کال کمتر از حداقل ۵۰٪ است",
     "VWAP_ANNUALIZED_RETURN_BELOW_50PCT":
-        "بازده سالانه‌شده پس از قیمت اجرای واقعی کمتر از ۵۰٪ شده است",
+        "بازده سالانه‌شده کاورد کال پس از VWAP کمتر از ۵۰٪ شده است",
     "MIN_NET_CAPITAL_NOT_MET":
-        "سرمایه خالص قابل اجرا کمتر از حداقل ۲ میلیون تومان است",
+        "سرمایه خالص کاورد کال کمتر از حداقل ۲۰۰ هزار تومان است",
     "ONE_UNIT_EXCEEDS_MAX_NET_CAPITAL":
-        "حتی یک واحد کامل معامله بیش از سقف ۱۰ میلیون تومان سرمایه نیاز دارد",
+        "حتی یک واحد کامل کاورد کال بیش از سقف ۱ میلیون تومان سرمایه خالص نیاز دارد",
     "MAX_NET_CAPITAL_EXCEEDED":
-        "سرمایه خالص معامله از سقف ۱۰ میلیون تومان بیشتر است",
+        "سرمایه خالص کاورد کال از سقف ۱ میلیون تومان بیشتر است",
     "VWAP_MAX_NET_CAPITAL_EXCEEDED":
-        "پس از اعمال قیمت واقعی Order Book، سرمایه از سقف ۱۰ میلیون تومان عبور کرده است",
+        "سرمایه خالص کاورد کال پس از VWAP از سقف ۱ میلیون تومان عبور کرده است",
+    "PP_MIN_ITM_PCT_NOT_MET":
+        "اختیار فروش حداقل ۱۰٪ داخل سود نیست",
+    "PP_EXPECTED_RETURN_NO_HISTORY":
+        "داده تاریخی کافی برای مدل بازده انتظاری پروتکتیو پوت وجود ندارد",
+    "PP_EXPECTED_RETURN_NO_IV":
+        "IV قابل استفاده برای مدل بازده انتظاری پروتکتیو پوت وجود ندارد",
+    "PP_EXPECTED_RETURN_BELOW_50PCT":
+        "بازده انتظاری History و IV هر دو از حداقل معادل ۵۰٪ سالانه عبور نکرده‌اند",
+    "PP_ONE_UNIT_EXCEEDS_MAX_CAPITAL":
+        "حتی یک واحد کامل پروتکتیو پوت بیش از سقف ۱ میلیون تومان سرمایه نیاز دارد",
+    "PP_MAX_CAPITAL_EXCEEDED":
+        "سرمایه پروتکتیو پوت از سقف ۱ میلیون تومان بیشتر است",
+    "PP_VWAP_MAX_CAPITAL_EXCEEDED":
+        "سرمایه پروتکتیو پوت پس از VWAP از سقف ۱ میلیون تومان عبور کرده است",
+    "PP_MIN_CAPITAL_NOT_MET":
+        "سرمایه پروتکتیو پوت کمتر از حداقل ۲۰۰ هزار تومان است",
+    "PP_VWAP_HISTORY_UNAVAILABLE":
+        "مدل History در قیمت اجرای نهایی قابل محاسبه نیست",
+    "PP_VWAP_IV_UNAVAILABLE":
+        "مدل IV در قیمت اجرای نهایی قابل محاسبه نیست",
+    "PP_VWAP_EXPECTED_RETURN_BELOW_50PCT":
+        "بازده انتظاری پروتکتیو پوت پس از VWAP از حداقل معادل ۵۰٪ سالانه عبور نکرده است",
 })
 
 def format_signal_message(
@@ -829,34 +864,69 @@ def format_signal_message(
 ) -> str:
     executed = str(row.get("paper_execution_status")) == "EXECUTED"
     reason_code = str(row.get("paper_execution_reason_code") or "")
-    reason = EXECUTION_REASON_FA.get(reason_code) or text_or_dash(row.get("paper_execution_reason"))
-    header = "🔄 بروزرسانی اجرای سیگنال" if status_update else "🔔 سیگنال جدید ReyT"
-    status_line = "✅ روی حساب فرضی اجرا شد" if executed else "⛔ روی حساب فرضی اجرا نشد"
+    reason = EXECUTION_REASON_FA.get(reason_code) or text_or_dash(
+        row.get("paper_execution_reason")
+    )
     details = signal_details(row)
     strategy_code = str(row.get("strategy_code") or "")
     is_covered_call = strategy_code == "COVERED_CALL"
+    is_protective_put = strategy_code == "PROTECTIVE_PUT"
 
-    hist_er = details.get("history_expected_return_to_expiry_pct")
-    iv_er = details.get("iv_expected_return_to_expiry_pct")
-    required_er = details.get("required_return_to_expiry_pct")
-    effective_iv = details.get("effective_iv_pct")
-    exec_hist_er = details.get("execution_history_expected_return_to_expiry_pct")
-    exec_iv_er = details.get("execution_iv_expected_return_to_expiry_pct")
+    style = {
+        "COVERED_CALL": ("🟦", "کاورد کال"),
+        "PROTECTIVE_PUT": ("🛡️", "پروتکتیو پوت"),
+    }.get(strategy_code, ("🔔", strategy_name(strategy_code)))
 
-    # Temporary Covered-Call-only policy fields
+    icon, strategy_title = style
+    header_prefix = "🔄 بروزرسانی" if status_update else "🔔 سیگنال جدید"
+    header = f"{header_prefix} | {icon} {strategy_title}"
+    status_line = (
+        "✅ روی حساب فرضی اجرا شد"
+        if executed
+        else "⛔ روی حساب فرضی اجرا نشد"
+    )
+
     signal_annualized_er = details.get("annualized_return_pct")
     execution_annualized_er = details.get("execution_annualized_return_pct")
-    min_annualized_er = details.get("covered_call_min_annualized_return_pct")
-    if min_annualized_er is None:
-        min_annualized_er = 50
+    cc_min_annualized = details.get(
+        "covered_call_min_annualized_return_pct", 50
+    )
+
+    pp_hist_ann = details.get(
+        "history_expected_annualized_return_pct"
+    )
+    pp_iv_ann = details.get(
+        "iv_expected_annualized_return_pct"
+    )
+    pp_exec_hist_ann = details.get(
+        "execution_history_expected_annualized_return_pct"
+    )
+    pp_exec_iv_ann = details.get(
+        "execution_iv_expected_annualized_return_pct"
+    )
+    pp_min_annualized = details.get(
+        "protective_put_min_expected_annualized_return_pct", 50
+    )
+
+    itm_depth = (
+        details.get("itm_depth_pct")
+        if is_covered_call
+        else details.get("protective_put_itm_depth_pct")
+    )
 
     lines = [
         header,
-        f"استراتژی: {strategy_name(row.get('strategy_code'))}",
-        f"دارایی پایه: {text_or_dash(row.get('underlying_symbol'))}",
-        f"سررسید: {text_or_dash(row.get('expiry_date'))} | DTE: {int(row.get('days_to_expiry') or 0)} روز",
-        f"Score: {fmt_num(row.get('strategy_score'), 2)} | Liquidity: {fmt_num(row.get('liquidity_score'), 2)}",
-        f"Reward/Risk: {fmt_num(row.get('reward_risk_ratio'), 3)}",
+        f"🧾 حساب: {text_or_dash(row.get('paper_account_name'))}",
+        f"📌 دارایی پایه: {text_or_dash(row.get('underlying_symbol'))}",
+        (
+            f"📅 سررسید: {text_or_dash(row.get('expiry_date'))} | "
+            f"DTE: {int(row.get('days_to_expiry') or 0)} روز"
+        ),
+        (
+            f"🎯 عمق ITM: {fmt_num(itm_depth, 2)}٪ | "
+            f"Score: {fmt_num(row.get('strategy_score'), 2)} | "
+            f"Liquidity: {fmt_num(row.get('liquidity_score'), 2)}"
+        ),
     ]
 
     if is_covered_call:
@@ -866,99 +936,133 @@ def format_signal_message(
             else signal_annualized_er
         )
         try:
-            threshold_ok = float(threshold_value) >= float(min_annualized_er)
+            threshold_ok = (
+                float(threshold_value) >= float(cc_min_annualized)
+            )
         except (TypeError, ValueError):
             threshold_ok = False
 
         lines.extend([
-            f"بازده سالانه‌شده سیگنال: {fmt_num(signal_annualized_er, 2)}٪",
+            "",
+            "📈 بازده",
+            (
+                f"• سالانه‌شده سیگنال: "
+                f"{fmt_num(signal_annualized_er, 2)}٪"
+            ),
         ])
-
         if executed:
             lines.append(
-                f"بازده سالانه‌شده اجرای واقعی: "
+                f"• سالانه‌شده اجرای واقعی: "
                 f"{fmt_num(execution_annualized_er, 2)}٪"
             )
-
         lines.append(
-            f"حداقل بازده موردنیاز: "
-            f"{fmt_num(min_annualized_er, 2)}٪ "
+            f"• حداقل موردنیاز: {fmt_num(cc_min_annualized, 2)}٪ "
             f"{'✅' if threshold_ok else '⛔'}"
         )
-    else:
+
+    elif is_protective_put:
+        values = [
+            x
+            for x in (
+                pp_exec_hist_ann if executed else pp_hist_ann,
+                pp_exec_iv_ann if executed else pp_iv_ann,
+            )
+            if x is not None
+        ]
+        try:
+            threshold_ok = (
+                len(values) == 2
+                and min(float(x) for x in values)
+                >= float(pp_min_annualized)
+            )
+        except (TypeError, ValueError):
+            threshold_ok = False
+
         lines.extend([
+            "",
+            "📈 بازده انتظاری سالانه‌شده",
+            f"• History: {fmt_num(pp_hist_ann, 2)}٪",
+            f"• IV: {fmt_num(pp_iv_ann, 2)}٪",
+        ])
+        if executed:
+            lines.extend([
+                f"• History بعد از VWAP: "
+                f"{fmt_num(pp_exec_hist_ann, 2)}٪",
+                f"• IV بعد از VWAP: "
+                f"{fmt_num(pp_exec_iv_ann, 2)}٪",
+            ])
+        lines.append(
+            f"• حداقل هر دو مدل: "
+            f"{fmt_num(pp_min_annualized, 2)}٪ "
+            f"{'✅' if threshold_ok else '⛔'}"
+        )
+
+    else:
+        hist_er = details.get("history_expected_return_to_expiry_pct")
+        iv_er = details.get("iv_expected_return_to_expiry_pct")
+        required_er = details.get("required_return_to_expiry_pct")
+        lines.extend([
+            "",
             f"بازده انتظاری History تا سررسید: {fmt_num(hist_er, 2)}٪",
             f"بازده انتظاری IV تا سررسید: {fmt_num(iv_er, 2)}٪",
-            f"حدنصاب معادل ۴۰٪ سالانه برای این DTE: {fmt_num(required_er, 2)}٪",
-            f"IV مؤثر ساختار: {fmt_num(effective_iv, 2)}٪",
+            f"حدنصاب این DTE: {fmt_num(required_er, 2)}٪",
         ])
 
     lines.extend([
         "",
+        "🧩 ساختار معامله",
         format_candidate_leg(row, 1),
         format_candidate_leg(row, 2),
         "",
     ])
 
-    if is_covered_call:
-        lines.append(
-            f"سرمایه خالص پیشنهادی: "
-            f"{fmt_money_toman(row.get('recommended_capital_rial'))} تومان"
-        )
-    else:
-        lines.extend([
-            f"ریسک پیشنهادی: {fmt_money_toman(row.get('recommended_risk_rial'))} تومان",
-            f"سرمایه پیشنهادی: {fmt_money_toman(row.get('recommended_capital_rial'))} تومان",
-        ])
-
+    capital_title = (
+        "سرمایه خالص"
+        if is_covered_call
+        else "سرمایه کل پوزیشن"
+        if is_protective_put
+        else "سرمایه"
+    )
     lines.extend([
-        f"حجم پیشنهادی: {int(row.get('recommended_units') or 0)}",
+        f"💰 {capital_title} پیشنهادی: "
+        f"{fmt_money_toman(row.get('recommended_capital_rial'))} تومان",
+        f"🔢 حجم پیشنهادی: {int(row.get('recommended_units') or 0)}",
         "",
         status_line,
     ])
 
-    if (not is_covered_call) and (
-        exec_hist_er is not None or exec_iv_er is not None
-    ):
-        lines.extend([
-            f"بازده History بعد از VWAP: {fmt_num(exec_hist_er, 2)}٪",
-            f"بازده IV بعد از VWAP: {fmt_num(exec_iv_er, 2)}٪",
-        ])
-
     if executed:
-        lines.extend(
-            [
-                f"Position ID: #{int(row.get('opened_position_id') or 0)}",
-                f"حجم اجرای واقعی: {int(row.get('paper_executed_units') or 0)}",
-            ]
-        )
-
-        if is_covered_call:
-            lines.append(
-                f"سرمایه خالص واقعی درگیر: "
+        lines.extend([
+            f"Position ID: #{int(row.get('opened_position_id') or 0)}",
+            f"حجم اجرای واقعی: {int(row.get('paper_executed_units') or 0)}",
+            (
+                f"💰 {capital_title} واقعی: "
                 f"{fmt_money_toman(row.get('paper_entry_capital_rial'))} تومان"
+            ),
+        ])
+        if is_protective_put:
+            lines.append(
+                f"🛡️ Max Loss واقعی: "
+                f"{fmt_money_toman(row.get('paper_entry_max_loss_rial'))} تومان"
             )
-        else:
-            lines.extend([
-                f"سرمایه واقعی درگیر: {fmt_money_toman(row.get('paper_entry_capital_rial'))} تومان",
-                f"Max Loss واقعی: {fmt_money_toman(row.get('paper_entry_max_loss_rial'))} تومان",
-            ])
-
         if executed_legs:
             lines.append("قیمت اجرای واقعی از Order Book:")
-            lines.extend(format_executed_leg(x) for x in executed_legs)
+            lines.extend(
+                format_executed_leg(x) for x in executed_legs
+            )
     else:
         lines.append(f"علت: {reason}")
         if reason_code:
             lines.append(f"کد علت: {reason_code}")
 
-    lines.extend(
-        [
-            "",
-            f"زمان سیگنال: {text_or_dash(row.get('scan_time'))}",
-            f"Signal ID: {row.get('signal_source_table')}#{int(row.get('signal_id') or 0)}",
-        ]
-    )
+    lines.extend([
+        "",
+        f"🕒 زمان سیگنال: {text_or_dash(row.get('scan_time'))}",
+        (
+            f"Signal ID: {row.get('signal_source_table')}#"
+            f"{int(row.get('signal_id') or 0)}"
+        ),
+    ])
     return "\n".join(lines)
 
 
@@ -991,7 +1095,11 @@ class ReyTBaleNotifier:
             baseline = datetime.combine(now.date(), time.min)
             self.state.set_meta("signal_watermark", baseline.isoformat(sep=" ", timespec="seconds"))
             print(f"[{tehran_now():%H:%M:%S}] ℹ️ Fresh state: today's signal baseline initialized at {baseline}")
-        print(f"[{tehran_now():%H:%M:%S}] ✅ Bale notifier ready | account={PAPER_ACCOUNT_NAME} | signal_mode={BALE_SIGNAL_MODE}")
+        print(
+            f"[{tehran_now():%H:%M:%S}] ✅ Bale notifier ready | "
+            f"accounts={','.join(PAPER_ACCOUNT_NAMES)} | "
+            f"signal_mode={BALE_SIGNAL_MODE}"
+        )
 
     async def close(self) -> None:
         await self.bale.close()
@@ -1067,9 +1175,14 @@ class ReyTBaleNotifier:
         return sent
 
     async def send_snapshot(self, title: str) -> None:
-        account, by_strategy, sig_counts = await self.repo.account_snapshot()
-        message = format_account_snapshot(account, by_strategy, sig_counts, title, tehran_now())
-        await self.bale.send_message(message)
+        for account_name in PAPER_ACCOUNT_NAMES:
+            account, by_strategy, sig_counts = await self.repo.account_snapshot(
+                account_name
+            )
+            message = format_account_snapshot(
+                account, by_strategy, sig_counts, title, tehran_now()
+            )
+            await self.bale.send_message(message)
 
     async def export_csv(self, report_date: Optional[date] = None) -> Tuple[Path, int]:
         d = report_date or tehran_now().date()
@@ -1082,7 +1195,8 @@ class ReyTBaleNotifier:
         caption = (
             f"📎 CSV کامل Paper Trading تا پایان {d.isoformat()}\n"
             f"تعداد ردیف سیگنال: {count:,}\n"
-            "استراتژی فعال: کاورد کال\nشامل وضعیت اجرا روی حساب فرضی + علت عدم اجرا + اطلاعات Paper Trading"
+            "استراتژی‌های فعال: کاورد کال + پروتکتیو پوت\n"
+            "شامل حساب مستقل هر استراتژی، وضعیت اجرا، علت عدم اجرا و اطلاعات Paper Trading"
         )
         await self.bale.send_document(path, caption=caption)
         return path, count
