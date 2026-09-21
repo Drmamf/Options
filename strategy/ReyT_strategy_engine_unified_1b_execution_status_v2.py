@@ -2720,8 +2720,7 @@ class PaperEngine:
             db, c, "EXECUTED", now,
             reason_code="POSITION_OPENED",
             reason=(
-                f"Opened {units} unit(s) on {ACCOUNT_NAME} using order-book VWAP; "
-                f"per-strategy allocation cap={MAX_STRATEGY_ALLOCATION_PCT}%."
+                f"Opened {units} unit(s) on {ACCOUNT_NAME} using order-book VWAP."
             ),
             position_id=pid,
         )
