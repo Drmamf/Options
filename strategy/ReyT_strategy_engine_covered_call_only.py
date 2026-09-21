@@ -213,6 +213,9 @@ def _cc_only_apply_expected_return_hurdle(
         c.details["covered_call_min_annualized_return_pct"] = (
             MIN_ANNUALIZED_RETURN_PCT
         )
+        c.details["covered_call_min_itm_pct"] = MIN_ITM_PCT
+        c.details["covered_call_min_net_capital_toman"] = MIN_NET_CAPITAL_TOMAN
+        c.details["covered_call_max_net_capital_toman"] = MAX_NET_CAPITAL_TOMAN
         if annual < MIN_ANNUALIZED_RETURN_PCT:
             c.final_signal = "REJECT"
             c.details["covered_call_annualized_filter"] = "FAIL"
