@@ -15,7 +15,7 @@ mirrors the current Covered Call paper mode as closely as the payoff permits:
   * Position sizing is based on TOTAL Protective Put capital:
         stock buy cash cost (including buy fee)
       + put buy cash cost (including option-buy fee)
-  * Maximum final position capital: 1,000,000 toman.
+  * Maximum final position capital: 10,000,000 toman.
   * Minimum final position capital:   200,000 toman.
   * Integer contract granularity is preserved.
   * The same allowed-underlying universe and order-book freshness/depth rules as
@@ -76,7 +76,7 @@ MIN_EXPECTED_ANNUALIZED_RETURN_PCT = base._decimal_setting(
     "PAPER_PP_MIN_EXPECTED_ANNUALIZED_RETURN_PCT", "50"
 )
 MAX_CAPITAL_TOMAN = base._decimal_setting(
-    "PAPER_PP_MAX_CAPITAL_TOMAN", "1000000"
+    "PAPER_PP_MAX_CAPITAL_TOMAN", "10000000"
 )
 MIN_CAPITAL_TOMAN = base._decimal_setting(
     "PAPER_PP_MIN_CAPITAL_TOMAN", "200000"
@@ -466,7 +466,7 @@ base.PaperEngine._non_entry_reason = staticmethod(_pp_only_non_entry_reason)
 
 
 # ---------------------------------------------------------------------------
-# 5) Execution: size by total capital [200K, 1M], then re-check 50% at VWAP.
+# 5) Execution: size by total capital [200K, 10M], then re-check 50% at VWAP.
 # ---------------------------------------------------------------------------
 
 def _pp_only_plan_execution(
@@ -492,7 +492,7 @@ def _pp_only_plan_execution(
         return base.ExecutionDecision(
             None,
             "PP_ONE_UNIT_EXCEEDS_MAX_CAPITAL",
-            "One whole Protective Put unit exceeds the 1M toman capital cap.",
+            "One whole Protective Put unit exceeds the 10M toman capital cap.",
         )
 
     for leg in c.legs:
@@ -590,7 +590,7 @@ def _pp_only_plan_execution(
                     None,
                     "PP_VWAP_MAX_CAPITAL_EXCEEDED",
                     "VWAP/slippage pushes one whole Protective Put unit "
-                    "above the 1M toman capital cap.",
+                    "above the 10M toman capital cap.",
                 )
             return base.ExecutionDecision(
                 None,
@@ -644,7 +644,7 @@ def _pp_only_plan_execution(
             "PP_MAX_CAPITAL_EXCEEDED",
             f"Final Protective Put capital "
             f"{base.money(final_capital/base.TOMAN_TO_RIAL):,.0f} toman "
-            "exceeds the 1M toman cap.",
+            "exceeds the 10M toman cap.",
         )
 
     if final_capital < MIN_CAPITAL_RIAL - Decimal("0.01"):
