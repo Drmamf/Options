@@ -1176,9 +1176,16 @@ class ReyTBaleNotifier:
 
     async def send_snapshot(self, title: str) -> None:
         for account_name in PAPER_ACCOUNT_NAMES:
-            account, by_strategy, sig_counts = await self.repo.account_snapshot(
-                account_name
-            )
+            try:
+                account, by_strategy, sig_counts = await self.repo.account_snapshot(
+                    account_name
+                )
+            except RuntimeError as exc:
+                print(
+                    f"[{tehran_now():%H:%M:%S}] ⚠️ Snapshot skipped for "
+                    f"{account_name}: {exc}"
+                )
+                continue
             message = format_account_snapshot(
                 account, by_strategy, sig_counts, title, tehran_now()
             )
