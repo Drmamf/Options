@@ -125,6 +125,14 @@ if MAX_CAPITAL_RIAL > base.INITIAL_CAPITAL_RIAL:
         "Protective Put max capital cannot exceed initial account capital."
     )
 
+# Keep legacy risk-budget/account metadata aligned with this PP capital policy.
+# Actual PP sizing below is explicitly based on total position capital.
+base.FIXED_RISK_PER_TRADE_TOMAN = MAX_CAPITAL_TOMAN
+base.FIXED_RISK_PER_TRADE_RIAL = MAX_CAPITAL_RIAL
+base.INITIAL_RISK_PCT = (
+    MAX_CAPITAL_RIAL / base.INITIAL_CAPITAL_RIAL * Decimal("100")
+)
+
 # Make the base expected-return model use the PP-specific 50% effective-annual
 # hurdle. Both History and IV must pass, matching the policy agreed for PP.
 base.EXPECTED_RETURN_HURDLE_EAR = (
