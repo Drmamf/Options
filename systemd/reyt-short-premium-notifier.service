@@ -1,0 +1,22 @@
+[Unit]
+Description=ReyT Short Premium Telegram Notifier
+After=network-online.target mysql.service reyt-short-premium.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reyt
+Group=reyt
+WorkingDirectory=/opt/reyt-github/bale
+Environment=HOME=/var/lib/reyt
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=SHORT_PREMIUM_CONFIG_FILE=/etc/reyt/short-premium/settings.ini
+ExecStart=/opt/reyt-venv/bin/python /opt/reyt-github/bale/ReyT_short_premium_telegram_notifier.py --watch
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target
