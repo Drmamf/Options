@@ -1087,22 +1087,43 @@ class ShortPremiumEngine:
         close_cost = D0
         mark_buy_fees = D0
         current_margin = D0
+        entry_role_margin = D0
+        adjustment_role_margin = D0
         all_marks_valid = True
 
         for leg in legs:
             remaining = int(leg.get("remaining_contracts") or 0)
+            role = str(leg.get("role") or "INITIAL")
             if remaining <= 0:
+                if persist and dec(leg.get("margin_allocated_rial")) != 0:
+                    await db.execute(
+                        "UPDATE short_premium_legs SET margin_allocated_rial=0 WHERE leg_id=%s",
+                        (leg["leg_id"],),
+                    )
                 continue
+
             q = await self._quote_for_ins(
                 db, str(leg["ins_code"]), str(p["underlying_symbol"]), p["expiry_date"], now
             )
             if not q or not valid_quote(q) or not quote_is_fresh(q, now):
                 all_marks_valid = False
-                continue
-            g, f, _ = buy_cash(q.ask, q.contract_size, remaining)
-            close_cost += g + f
-            mark_buy_fees += f
-            current_margin += short_margin_per_contract(q, spot) * Decimal(remaining)
+                leg_margin = dec(leg.get("margin_allocated_rial"))
+            else:
+                g, f, _ = buy_cash(q.ask, q.contract_size, remaining)
+                close_cost += g + f
+                mark_buy_fees += f
+                leg_margin = short_margin_per_contract(q, spot) * Decimal(remaining)
+                if persist:
+                    await db.execute(
+                        "UPDATE short_premium_legs SET margin_allocated_rial=%s WHERE leg_id=%s",
+                        (money(leg_margin), leg["leg_id"]),
+                    )
+
+            current_margin += leg_margin
+            if role == "ADJUSTMENT":
+                adjustment_role_margin += leg_margin
+            else:
+                entry_role_margin += leg_margin
 
         lower, upper = full_position_breakevens(net_cashflow, legs)
         side, ld = loss_distance(spot, lower, upper)
@@ -1125,6 +1146,8 @@ class ShortPremiumEngine:
             "loss_side": side,
             "loss_distance_pct": ld,
             "current_margin": money(current_margin),
+            "entry_role_margin": money(entry_role_margin),
+            "adjustment_role_margin": money(adjustment_role_margin),
             "close_cost": money(close_cost),
             "gross_pnl": money(gross_pnl),
             "net_pnl": money(net_pnl),
@@ -1134,13 +1157,17 @@ class ShortPremiumEngine:
             await db.execute(
                 """
                 UPDATE short_premium_positions
-                SET current_margin_rial=%s,lower_breakeven_rial=%s,upper_breakeven_rial=%s,
+                SET current_margin_rial=%s,
+                    entry_margin_allocated_rial=%s,
+                    adjustment_margin_allocated_rial=%s,
+                    lower_breakeven_rial=%s,upper_breakeven_rial=%s,
                     current_underlying_price_rial=%s,current_close_cost_rial=%s,
                     gross_pnl_rial=%s,net_pnl_rial=%s,last_valued_at=%s
                 WHERE position_id=%s
                 """,
                 (
-                    state["current_margin"], lower, upper, spot, state["close_cost"],
+                    state["current_margin"], state["entry_role_margin"], state["adjustment_role_margin"],
+                    lower, upper, spot, state["close_cost"],
                     state["gross_pnl"], state["net_pnl"], now, p["position_id"],
                 ),
             )
@@ -1165,7 +1192,7 @@ class ShortPremiumEngine:
                 (
                     p["position_id"], now, spot, lower, upper, ld, state["current_margin"],
                     state["gross_pnl"], state["net_pnl"], state["close_cost"],
-                    p["entry_margin_allocated_rial"], p["adjustment_margin_allocated_rial"],
+                    state["entry_role_margin"], state["adjustment_role_margin"],
                     json.dumps(
                         {"loss_side": side, "marks_valid": all_marks_valid},
                         ensure_ascii=False,
