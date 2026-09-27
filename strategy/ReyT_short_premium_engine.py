@@ -208,7 +208,8 @@ def previous_trading_day(d: date) -> date:
 
 
 def in_market_window(now: datetime) -> bool:
-    return is_market_day(now.date()) and MARKET_START <= now.time() <= MARKET_END
+    minute = now.time().replace(second=0, microsecond=0)
+    return is_market_day(now.date()) and MARKET_START <= minute <= MARKET_END
 
 
 def can_open_new_entries(now: datetime) -> bool:
