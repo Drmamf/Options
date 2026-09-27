@@ -141,6 +141,9 @@ MAX_DTE = _int_setting("PAPER_MAX_DAYS_TO_EXPIRY", 180, max(0, MIN_DTE))
 MAX_STRIKE_STEPS = _int_setting("PAPER_MAX_STRIKE_STEPS", 4, 1)
 MAX_ENTRY_BOOK_AGE_SECONDS = _int_setting("PAPER_MAX_ENTRY_BOOK_AGE_SECONDS", 150, 1)
 MAX_MARK_BOOK_AGE_SECONDS = _int_setting("PAPER_MAX_MARK_BOOK_AGE_SECONDS", 900, 1)
+POSITION_VALUATION_HISTORY_INTERVAL_SECONDS = _int_setting(
+    "PAPER_POSITION_VALUATION_HISTORY_INTERVAL_SECONDS", 300, 0
+)
 VOL_LOOKBACK_DAYS = _int_setting("PAPER_VOLATILITY_LOOKBACK_DAYS", 252, 2)
 MIN_VOL_RETURNS = _int_setting("PAPER_MIN_VOLATILITY_RETURNS", 90, 2)
 
@@ -1083,6 +1086,7 @@ class PaperEngine:
         self._er_history_returns: Dict[str, List[float]] = {}
         self._er_hist_multiplier_cache: Dict[Tuple[str, int], List[float]] = {}
         self._er_iv_multiplier_cache: Dict[Tuple[str, int, float], List[float]] = {}
+        self._last_position_valuation_history_at: Optional[datetime] = None
 
     async def open(self) -> None:
         validate_configuration()
@@ -2249,6 +2253,15 @@ class PaperEngine:
         positions = await self._load_open_positions(db, account_id)
         valued = 0
         closed = 0
+        record_valuation_history = (
+            POSITION_VALUATION_HISTORY_INTERVAL_SECONDS > 0
+            and (
+                self._last_position_valuation_history_at is None
+                or (
+                    now - self._last_position_valuation_history_at
+                ).total_seconds() >= POSITION_VALUATION_HISTORY_INTERVAL_SECONDS
+            )
+        )
 
         for p in positions.values():
             expired = (
@@ -2296,30 +2309,34 @@ class PaperEngine:
                 f"UPDATE {qname('paper_position_legs')} SET latest_price_rial=%s,updated_at=CURRENT_TIMESTAMP WHERE leg_id=%s",
                 updates,
             )
-            await db.execute(
-                f"""
-                INSERT INTO {qname('paper_position_valuations')} (
-                    position_id,valuation_time,position_value_rial,unrealized_pnl_rial,
-                    return_on_risk_pct,underlying_price_rial,max_favorable_pnl_rial,
-                    max_adverse_pnl_rial,quote_is_stale,valuation_reason,leg_marks_json
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON DUPLICATE KEY UPDATE
-                    position_value_rial=VALUES(position_value_rial),
-                    unrealized_pnl_rial=VALUES(unrealized_pnl_rial),
-                    return_on_risk_pct=VALUES(return_on_risk_pct),
-                    underlying_price_rial=VALUES(underlying_price_rial),
-                    max_favorable_pnl_rial=VALUES(max_favorable_pnl_rial),
-                    max_adverse_pnl_rial=VALUES(max_adverse_pnl_rial),
-                    quote_is_stale=VALUES(quote_is_stale),valuation_reason=VALUES(valuation_reason),
-                    leg_marks_json=VALUES(leg_marks_json)
-                """,
-                (
-                    p["position_id"], now, money(current_net), money(pnl), pct(ror),
-                    money(spot) if spot > D0 else None, money(mfe), money(mae), stale,
-                    reason or ("Conservative fee-aware liquidation marks." if not stale else "Fallback/stale mark used."),
-                    json.dumps(marks, ensure_ascii=False, default=json_default),
-                ),
-            )
+            # Keep live paper-position state fresh on every scan, but sample the
+            # heavyweight valuation history at a configurable interval. Always
+            # retain a final snapshot when a position closes/expires.
+            if record_valuation_history or status:
+                await db.execute(
+                    f"""
+                    INSERT INTO {qname('paper_position_valuations')} (
+                        position_id,valuation_time,position_value_rial,unrealized_pnl_rial,
+                        return_on_risk_pct,underlying_price_rial,max_favorable_pnl_rial,
+                        max_adverse_pnl_rial,quote_is_stale,valuation_reason,leg_marks_json
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE
+                        position_value_rial=VALUES(position_value_rial),
+                        unrealized_pnl_rial=VALUES(unrealized_pnl_rial),
+                        return_on_risk_pct=VALUES(return_on_risk_pct),
+                        underlying_price_rial=VALUES(underlying_price_rial),
+                        max_favorable_pnl_rial=VALUES(max_favorable_pnl_rial),
+                        max_adverse_pnl_rial=VALUES(max_adverse_pnl_rial),
+                        quote_is_stale=VALUES(quote_is_stale),valuation_reason=VALUES(valuation_reason),
+                        leg_marks_json=VALUES(leg_marks_json)
+                    """,
+                    (
+                        p["position_id"], now, money(current_net), money(pnl), pct(ror),
+                        money(spot) if spot > D0 else None, money(mfe), money(mae), stale,
+                        reason or ("Conservative fee-aware liquidation marks." if not stale else "Fallback/stale mark used."),
+                        json.dumps(marks, ensure_ascii=False, default=json_default),
+                    ),
+                )
 
             if status:
                 await db.execute(
@@ -2358,6 +2375,9 @@ class PaperEngine:
                     ),
                 )
             valued += 1
+
+        if record_valuation_history and valued:
+            self._last_position_valuation_history_at = now
         return valued, closed
 
     async def _update_account(self, db: DB, account: Account, now: datetime, history: bool = True) -> Account:
