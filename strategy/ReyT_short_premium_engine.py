@@ -622,7 +622,8 @@ class ShortPremiumEngine:
         rows = await db.fetchall(
             f"""
             SELECT ua.ua_ins_code,ua.symbol,
-                   COALESCE(NULLIF(ua.last_trade_price,0),ua.closing_price) AS spot
+                   COALESCE(NULLIF(ua.last_trade_price,0),ua.closing_price) AS spot,
+                   ua.last_update
             FROM underlying_assets ua
             WHERE ua.symbol IN ({placeholders})
             """,
@@ -631,7 +632,11 @@ class ShortPremiumEngine:
         out: List[Dict[str, Any]] = []
         for u in rows:
             spot = dec(u.get("spot"))
-            if spot <= 0:
+            last_update = u.get("last_update")
+            if spot <= 0 or not isinstance(last_update, datetime):
+                continue
+            spot_age = (now - last_update).total_seconds()
+            if spot_age < 0 or spot_age > QUOTE_MAX_AGE_SECONDS:
                 continue
             expiries = await db.fetchall(
                 """
@@ -1066,20 +1071,27 @@ class ShortPremiumEngine:
             tick_time=row["tick_time"],
         )
 
-    async def _spot(self, db: DB, ua_ins_code: str) -> Decimal:
+    async def _spot(self, db: DB, ua_ins_code: str, now: datetime) -> Decimal:
         row = await db.fetchone(
             """
-            SELECT COALESCE(NULLIF(last_trade_price,0),closing_price) AS spot
+            SELECT COALESCE(NULLIF(last_trade_price,0),closing_price) AS spot,last_update
             FROM underlying_assets WHERE ua_ins_code=%s
             """,
             (ua_ins_code,),
         )
-        return dec(row.get("spot") if row else None)
+        if not row or not isinstance(row.get("last_update"), datetime):
+            return D0
+        age = (now - row["last_update"]).total_seconds()
+        if age < 0 or age > QUOTE_MAX_AGE_SECONDS:
+            return D0
+        return dec(row.get("spot"))
 
     async def _revalue_position(
         self, db: DB, p: Mapping[str, Any], now: datetime, persist: bool = True
     ) -> Dict[str, Any]:
-        spot = await self._spot(db, str(p["ua_ins_code"]))
+        live_spot = await self._spot(db, str(p["ua_ins_code"]), now)
+        spot_valid = live_spot > 0
+        spot = live_spot if spot_valid else dec(p.get("current_underlying_price_rial"))
         legs = await self._position_legs(db, int(p["position_id"]))
         net_cashflow = dec(p.get("cumulative_net_cashflow_rial"))
         gross_sell = dec(p.get("cumulative_sell_gross_rial"))
@@ -1089,7 +1101,7 @@ class ShortPremiumEngine:
         current_margin = D0
         entry_role_margin = D0
         adjustment_role_margin = D0
-        all_marks_valid = True
+        all_marks_valid = spot_valid
 
         for leg in legs:
             remaining = int(leg.get("remaining_contracts") or 0)
