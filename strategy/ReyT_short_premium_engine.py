@@ -1850,6 +1850,12 @@ class ShortPremiumEngine:
             lower, upper = full_position_breakevens(net, open_legs)
             position_id = await self._open_position(db, c, qty, now)
             opened += 1
+            opened_position = await db.fetchone(
+                "SELECT * FROM short_premium_positions WHERE position_id=%s",
+                (position_id,),
+            )
+            if opened_position:
+                await self._revalue_position(db, opened_position, now, persist=True)
 
             u = {
                 "ua_ins_code": c.ua_ins_code,
