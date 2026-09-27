@@ -122,6 +122,7 @@ BALE_QUERY_BATCH_SIZE = _int_setting("BALE_QUERY_BATCH_SIZE", 2000, 100)
 
 STATE_DB_PATH = Path(_setting("BALE_STATE_DB_PATH", str(BASE_DIR / "reyt_bale_notifier_state.sqlite3")))
 REPORT_DIR = Path(_setting("BALE_REPORT_DIR", str(BASE_DIR / "bale_reports")))
+BALE_REPORT_RETENTION_DAYS = _int_setting("BALE_REPORT_RETENTION_DAYS", 7, 1)
 
 MORNING_REPORT_TIME = time(8, 30)
 MARKET_OPEN = time(9, 0)
@@ -1203,6 +1204,24 @@ class ReyTBaleNotifier:
             )
             await self.bale.send_message(message)
 
+    def _prune_old_reports(self, reference_date: date) -> int:
+        cutoff = reference_date - timedelta(days=BALE_REPORT_RETENTION_DAYS)
+        removed = 0
+        prefix = "ReyT_all_paper_signals_"
+        for path in REPORT_DIR.glob(f"{prefix}*.csv"):
+            raw_date = path.stem.removeprefix(prefix)
+            try:
+                report_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if report_date < cutoff:
+                try:
+                    path.unlink()
+                    removed += 1
+                except FileNotFoundError:
+                    pass
+        return removed
+
     async def export_csv(self, report_date: Optional[date] = None) -> Tuple[Path, int]:
         d = report_date or tehran_now().date()
         path = REPORT_DIR / f"ReyT_all_paper_signals_{d:%Y-%m-%d}.csv"
@@ -1218,6 +1237,12 @@ class ReyTBaleNotifier:
             "شامل حساب مستقل هر استراتژی، وضعیت اجرا، علت عدم اجرا و اطلاعات Paper Trading"
         )
         await self.bale.send_document(path, caption=caption)
+        removed = self._prune_old_reports(d)
+        if removed:
+            print(
+                f"[{tehran_now():%H:%M:%S}] 🧹 Pruned {removed} old Bale report file(s) "
+                f"(retention={BALE_REPORT_RETENTION_DAYS} days)"
+            )
         return path, count
 
     async def scheduled_actions_once(self) -> None:
