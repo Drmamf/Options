@@ -28,6 +28,11 @@ echo "========== PYTHON SYNTAX =========="
 echo "SYNTAX_OK"
 
 echo
+echo "========== CORE MATH SELFTEST =========="
+cd "$ROOT_DIR/strategy"
+PYTHONPATH="$ROOT_DIR/strategy" "$PY" "$ROOT_DIR/tools/selftest_short_premium_math.py"
+
+echo
 echo "========== ISOLATED TABLES =========="
 mysql "$DB" <<'SQL'
 SELECT TABLE_NAME
