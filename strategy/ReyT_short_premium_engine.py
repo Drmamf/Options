@@ -482,6 +482,7 @@ class ShortPremiumEngine:
     def __init__(self) -> None:
         self.pool: Optional[aiomysql.Pool] = None
         self.shutdown = asyncio.Event()
+        self.last_scan_slot: Optional[datetime] = None
 
     async def open(self) -> None:
         validate_configuration()
@@ -1105,8 +1106,16 @@ class ShortPremiumEngine:
 
         lower, upper = full_position_breakevens(net_cashflow, legs)
         side, ld = loss_distance(spot, lower, upper)
-        gross_pnl = gross_sell - gross_buy - max(D0, close_cost - mark_buy_fees)
-        net_pnl = net_cashflow - close_cost
+
+        if all_marks_valid:
+            gross_pnl = gross_sell - gross_buy - max(D0, close_cost - mark_buy_fees)
+            net_pnl = net_cashflow - close_cost
+        else:
+            # Never distort account equity/margin because one transient quote is missing.
+            current_margin = dec(p.get("current_margin_rial"))
+            close_cost = dec(p.get("current_close_cost_rial"))
+            gross_pnl = dec(p.get("gross_pnl_rial"))
+            net_pnl = dec(p.get("net_pnl_rial"))
 
         state = {
             "spot": spot,
@@ -1508,13 +1517,19 @@ class ShortPremiumEngine:
             if new_margin <= MAX_POSITION_MARGIN_RIAL and added_margin <= adjustment_free:
                 executable_candidates.append(item)
 
+        all_quotes_observable = len(fresh_valid) == len(typed) and len(typed) > 0
+
         if not restoration_candidates:
+            if not all_quotes_observable:
+                return "WAIT_TRANSIENT_QUOTE"
             await self._start_exit(
                 db, p, "FORCED", now, "No adjustment strike/volume can restore loss distance to <=5%."
             )
             return "FORCED_NO_RESTORATION"
 
         if not executable_candidates:
+            if not all_quotes_observable:
+                return "WAIT_TRANSIENT_QUOTE"
             await self._start_exit(
                 db, p, "FORCED", now, "Valid adjustment exists but margin cap/reserve blocks execution."
             )
@@ -1615,12 +1630,19 @@ class ShortPremiumEngine:
         )
 
         # 1) Scheduled exit state transition.
+        # If the service was down at 12:00 on the previous trading day, recover safely
+        # on the expiry day instead of leaving the position OPEN/adjustable.
         for p in positions:
             if str(p["status"]) != "OPEN":
                 continue
-            if now.date() == previous_trading_day(p["expiry_date"]) and now.time() >= SCHEDULED_EXIT_TIME:
+            scheduled_day = previous_trading_day(p["expiry_date"])
+            due = (
+                (now.date() == scheduled_day and now.time() >= SCHEDULED_EXIT_TIME)
+                or now.date() > scheduled_day
+            )
+            if due:
                 await self._start_exit(
-                    db, p, "SCHEDULED", now, "Previous trading day scheduled exit at/after 12:00."
+                    db, p, "SCHEDULED", now, "Scheduled pre-expiry exit is due."
                 )
 
         # Reload after transitions.
@@ -1670,6 +1692,14 @@ class ShortPremiumEngine:
                 )
                 if p2:
                     await self._revalue_position(db, p2, now, persist=True)
+            elif result.startswith("FORCED_"):
+                # Forced exit starts immediately in the same 5-minute snapshot.
+                p2 = await db.fetchone(
+                    "SELECT * FROM short_premium_positions WHERE position_id=%s",
+                    (p["position_id"],),
+                )
+                if p2 and await self._execute_exit_cycle(db, p2, now):
+                    closed += 1
 
         return adjusted, closed
 
@@ -1889,23 +1919,20 @@ class ShortPremiumEngine:
         while not self.shutdown.is_set():
             now = tehran_now()
             if in_market_window(now):
-                if now.minute % 5 == 0 and now.second < 5:
+                slot = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
+                if now.minute % 5 == 0 and self.last_scan_slot != slot:
+                    self.last_scan_slot = slot
                     try:
-                        result = await self.run_once(now)
+                        result = await self.run_once(slot)
                         print(
                             f"[{tehran_now():%H:%M:%S}] short-premium scan "
                             f"opened={result['opened']} adjusted={result['adjusted']} closed={result['closed']}"
                         )
                     except Exception as exc:
                         print(f"[{tehran_now():%H:%M:%S}] ERROR short-premium scan: {exc}")
-                    try:
-                        await asyncio.wait_for(self.shutdown.wait(), timeout=55)
-                    except asyncio.TimeoutError:
-                        pass
-                    continue
 
-            # Sleep toward the next five-minute boundary without busy-waiting.
-            seconds = max(1, min(30, SCAN_INTERVAL_SECONDS))
+            # Short sleep prevents missed 5-minute snapshots after a slow scan/startup.
+            seconds = max(1, min(15, SCAN_INTERVAL_SECONDS))
             try:
                 await asyncio.wait_for(self.shutdown.wait(), timeout=seconds)
             except asyncio.TimeoutError:
