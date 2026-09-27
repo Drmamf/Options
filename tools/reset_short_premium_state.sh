@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-DB="\${MYSQL_DATABASE:-ghazali1_ReyTOption}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DB="${MYSQL_DATABASE:-ghazali1_ReyTOption}"
 STATE_DB="/var/lib/reyt/short-premium/notifier_state.sqlite3"
 
 echo "Stopping ONLY short-premium services..."
