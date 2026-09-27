@@ -1892,7 +1892,7 @@ class ShortPremiumEngine:
         return opened
 
     async def run_once(self, now: Optional[datetime] = None) -> Dict[str, int]:
-        now = (now or tehran_now()).replace(second=0, microsecond=0)
+        now = (now or tehran_now()).replace(microsecond=0)
         if not is_market_day(now.date()):
             return {"opened": 0, "adjusted": 0, "closed": 0, "skipped": 1}
 
@@ -1963,7 +1963,7 @@ class ShortPremiumEngine:
                 if now.minute % 5 == 0 and self.last_scan_slot != slot:
                     self.last_scan_slot = slot
                     try:
-                        result = await self.run_once(slot)
+                        result = await self.run_once(now)
                         print(
                             f"[{tehran_now():%H:%M:%S}] short-premium scan "
                             f"opened={result['opened']} adjusted={result['adjusted']} closed={result['closed']}"
