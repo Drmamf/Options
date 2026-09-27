@@ -314,8 +314,25 @@ def format_event(row: Mapping[str, Any]) -> str:
                 f"سررسید: {d.get('expiry','—')}",
                 f"Spot: {toman(d.get('spot_rial'))} تومان",
                 "",
-                f"Put: {d.get('put_symbol','—')} | Strike {toman(d.get('put_strike_rial'))} | Bid {toman(d.get('put_bid_rial'))}",
-                f"Call: {d.get('call_symbol','—')} | Strike {toman(d.get('call_strike_rial'))} | Bid {toman(d.get('call_bid_rial'))}",
+            ]
+        )
+        if str(row.get("strategy_code")) == "SHORT_STRADDLE":
+            lines.extend(
+                [
+                    f"Strike مشترک: {toman(d.get('put_strike_rial'))} تومان",
+                    f"Put: {d.get('put_symbol','—')} | Bid {toman(d.get('put_bid_rial'))} تومان",
+                    f"Call: {d.get('call_symbol','—')} | Bid {toman(d.get('call_bid_rial'))} تومان",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"Put OTM: {d.get('put_symbol','—')} | Strike {toman(d.get('put_strike_rial'))} | Bid {toman(d.get('put_bid_rial'))}",
+                    f"Call OTM: {d.get('call_symbol','—')} | Strike {toman(d.get('call_strike_rial'))} | Bid {toman(d.get('call_bid_rial'))}",
+                ]
+            )
+        lines.extend(
+            [
                 f"حجم اجرا: {d.get('qty',0)} قرارداد در هر سمت",
                 "",
                 f"Premium ناخالص: {toman(d.get('gross_premium_rial'))} تومان",
