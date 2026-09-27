@@ -1132,8 +1132,9 @@ class ShortPremiumEngine:
             gross_pnl = gross_sell - gross_buy - max(D0, close_cost - mark_buy_fees)
             net_pnl = net_cashflow - close_cost
         else:
-            # Never distort account equity/margin because one transient quote is missing.
-            current_margin = dec(p.get("current_margin_rial"))
+            # Never distort P&L because one transient quote is missing. Margin can still
+            # be updated safely: valid legs use current margin and missing legs retain
+            # their last stored margin.
             close_cost = dec(p.get("current_close_cost_rial"))
             gross_pnl = dec(p.get("gross_pnl_rial"))
             net_pnl = dec(p.get("net_pnl_rial"))
