@@ -1788,7 +1788,7 @@ class ShortPremiumEngine:
             key=lambda c: (
                 c.yield_per_day,
                 c.be_width_pct,
-                -c.pair_margin_per_contract,
+                -(c.pair_margin_per_contract * Decimal(c.desired_qty)),
             ),
             reverse=True,
         )
