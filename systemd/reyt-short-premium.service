@@ -1,0 +1,22 @@
+[Unit]
+Description=ReyT Short Straddle and Short Strangle Paper Trading Engine
+After=network-online.target mysql.service reyt-collector.service
+Wants=network-online.target
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=reyt
+Group=reyt
+WorkingDirectory=/opt/reyt-github/strategy
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=SHORT_PREMIUM_CONFIG_FILE=/etc/reyt/short-premium/settings.ini
+ExecStart=/opt/reyt-venv/bin/python /opt/reyt-github/strategy/ReyT_short_premium_engine.py --watch
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target
