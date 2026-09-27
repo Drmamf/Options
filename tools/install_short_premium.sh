@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-DB="\${MYSQL_DATABASE:-ghazali1_ReyTOption}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DB="${MYSQL_DATABASE:-ghazali1_ReyTOption}"
 CFG_DIR="/etc/reyt/short-premium"
-CFG_FILE="\${CFG_DIR}/settings.ini"
+CFG_FILE="${CFG_DIR}/settings.ini"
 STATE_DIR="/var/lib/reyt/short-premium"
 
 echo "== ReyT Short Premium isolated install =="
