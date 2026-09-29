@@ -20,7 +20,7 @@ if [[ ! -f "$CFG_FILE" ]]; then
   install -o root -g reyt -m 0640 \
     "$ROOT_DIR/config/SHORT_PREMIUM_SETTINGS_REFERENCE.ini" "$CFG_FILE"
   echo "Created $CFG_FILE from reference."
-  echo "IMPORTANT: add MYSQL_PASSWORD and the NEW Telegram BOT_TOKEN / CHAT_ID before start."
+  echo "IMPORTANT: add MYSQL_PASSWORD and Telegram BOT_TOKEN / CHAT_ID before start. Short Premium Bale BOT_TOKEN / CHAT_ID are optional and can be added later."
 else
   echo "Preserving existing $CFG_FILE (secrets/config not overwritten)."
 fi

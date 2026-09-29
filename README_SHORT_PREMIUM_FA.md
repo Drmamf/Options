@@ -88,3 +88,13 @@
 ## نکته
 
 تا قبل از اجرای database/02_create_short_premium_isolated.sql هیچ جدول جدیدی در VPS ساخته نمی‌شود. Migration فقط اشیای جدید Short Premium را ایجاد می‌کند.
+
+## اعلان‌های Short Premium — Telegram + Bale
+
+Notifier استرادل/استرانگل از Telegram و Bale پشتیبانی می‌کند.
+Telegram طبق تنظیمات فعلی فعال است. Bale اختیاری است و تا زمانی که هر دو مقدار
+`BOT_TOKEN` و `CHAT_ID` در بخش `[short_premium_bale]` تنظیم نشده باشند،
+غیرفعال می‌ماند و روی ارسال Telegram اثری ندارد.
+
+پس از تنظیم هر دو مقدار Bale، هر پیام Short Premium به هر دو کانال ارسال می‌شود.
+خرابی یک کانال مانع تلاش کانال دیگر نمی‌شود.

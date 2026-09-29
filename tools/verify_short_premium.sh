@@ -64,6 +64,26 @@ echo "========== CONFIG =========="
 test -f "$CFG" || { echo "MISSING_CONFIG: $CFG"; exit 1; }
 grep -E '^(STRADDLE_ACCOUNT_NAME|STRANGLE_ACCOUNT_NAME|INITIAL_CAPITAL_TOMAN|MIN_DTE|MAX_DTE|ENTRY_BUCKET_PCT|ADJUSTMENT_BUCKET_PCT|MIN_POSITION_VALUE_TOMAN|MAX_POSITION_MARGIN_TOMAN|MIN_NET_PREMIUM_TO_MARGIN_PCT|MAX_IMMEDIATE_CLOSE_LOSS_PCT|STRADDLE_STRESS_PCT|STRANGLE_STRESS_PCT|MAX_LOSS_ZONE_DISTANCE_PCT)[[:space:]]*=' "$CFG"
 
+"$PY" - "$CFG" <<'PYCFG'
+import configparser
+import sys
+
+cfg = configparser.ConfigParser(interpolation=None, strict=False)
+cfg.read(sys.argv[1], encoding="utf-8")
+
+token = cfg.get("short_premium_bale", "BOT_TOKEN", fallback="").strip()
+chat = cfg.get("short_premium_bale", "CHAT_ID", fallback="").strip()
+
+if bool(token) ^ bool(chat):
+    print("SHORT_PREMIUM_BALE=INCOMPLETE_CONFIG")
+    raise SystemExit(1)
+
+if token and chat:
+    print("SHORT_PREMIUM_BALE=CONFIGURED")
+else:
+    print("SHORT_PREMIUM_BALE=DISABLED_NOT_CONFIGURED")
+PYCFG
+
 echo
 echo "========== LEGACY SCHEMA SAFETY =========="
 if grep -Eiq 'DROP[[:space:]]+TABLE|TRUNCATE[[:space:]]+TABLE|ALTER[[:space:]]+TABLE[[:space:]]+(paper_|covered_call|protective_put|bull_call|bear_put|long_straddle)' \

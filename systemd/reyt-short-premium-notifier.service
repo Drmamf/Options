@@ -1,5 +1,5 @@
 [Unit]
-Description=ReyT Short Premium Telegram Notifier
+Description=ReyT Short Premium Telegram + Bale Notifier
 After=network-online.target mysql.service reyt-short-premium.service
 Wants=network-online.target
 

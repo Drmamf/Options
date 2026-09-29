@@ -43,6 +43,18 @@ def _setting(name: str, default: str = "") -> str:
     return default
 
 
+def _bale_setting(name: str, default: str = "") -> str:
+    """Read Short Premium Bale settings without mixing them with Telegram."""
+    env = os.getenv(f"SHORT_PREMIUM_BALE_{name}")
+    if env is not None:
+        return env.strip()
+
+    if CFG.has_option("short_premium_bale", name.lower()):
+        return CFG.get("short_premium_bale", name.lower()).strip()
+
+    return default
+
+
 def _int(name: str, default: int, minimum: int = 0) -> int:
     return max(minimum, int(_setting(name, str(default))))
 
@@ -74,6 +86,15 @@ STATE_PATH = Path(
         "/var/lib/reyt/short-premium/notifier_state.sqlite3",
     )
 )
+
+BALE_BOT_TOKEN = _bale_setting("BOT_TOKEN", "")
+BALE_CHAT_ID = _bale_setting("CHAT_ID", "")
+BALE_API_BASE = _bale_setting("API_BASE", "https://tapi.bale.ai")
+BALE_HTTP_TIMEOUT = max(5, int(_bale_setting("HTTP_TIMEOUT", "30")))
+BALE_HTTP_RETRIES = max(1, int(_bale_setting("HTTP_RETRIES", "4")))
+
+BALE_CONFIGURED = bool(BALE_BOT_TOKEN and BALE_CHAT_ID)
+BALE_CONFIG_INCOMPLETE = bool(BALE_BOT_TOKEN) ^ bool(BALE_CHAT_ID)
 
 TOMAN_TO_RIAL = Decimal("10")
 
@@ -187,6 +208,219 @@ class TelegramClient:
                 if attempt < HTTP_RETRIES:
                     await asyncio.sleep(min(10, attempt * 2))
         raise RuntimeError(f"Telegram send failed after retries: {last}")
+
+
+class BaleClient:
+    def __init__(self) -> None:
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.api_prefix = ""
+
+    async def open(self) -> None:
+        if not BALE_BOT_TOKEN or not BALE_CHAT_ID:
+            raise RuntimeError("Short-premium Bale BOT_TOKEN/CHAT_ID are missing.")
+
+        self.api_prefix = (
+            f"{BALE_API_BASE.rstrip('/')}/bot{BALE_BOT_TOKEN}"
+        )
+
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=BALE_HTTP_TIMEOUT)
+        )
+
+    async def close(self) -> None:
+        if self.session:
+            await self.session.close()
+            self.session = None
+
+    async def send(self, message: str) -> None:
+        if not self.session:
+            raise RuntimeError("Bale client is closed.")
+
+        url = f"{self.api_prefix}/sendMessage"
+        payload = {
+            "chat_id": BALE_CHAT_ID,
+            "text": message,
+        }
+
+        last: Optional[Exception] = None
+
+        for attempt in range(1, BALE_HTTP_RETRIES + 1):
+            try:
+                async with self.session.post(url, json=payload) as resp:
+                    body = await resp.text()
+
+                    if resp.status >= 500 or resp.status == 429:
+                        if attempt < BALE_HTTP_RETRIES:
+                            await asyncio.sleep(min(10, attempt * 2))
+                            continue
+
+                    if resp.status >= 400:
+                        raise RuntimeError(
+                            f"Bale HTTP {resp.status}: {body[:500]}"
+                        )
+
+                    data = json.loads(body) if body else {}
+
+                    if isinstance(data, dict) and data.get("ok") is False:
+                        raise RuntimeError(
+                            f"Bale send failed: {data}"
+                        )
+
+                    return
+
+            except Exception as exc:
+                last = exc
+
+                if attempt < BALE_HTTP_RETRIES:
+                    await asyncio.sleep(min(10, attempt * 2))
+
+        raise RuntimeError(
+            f"Bale send failed after retries: {last}"
+        )
+
+
+class DualChannelSender:
+    """
+    Telegram is already configured for Short Premium.
+
+    Bale is optional:
+      - no Bale credentials -> Telegram-only, no startup failure
+      - Bale credentials present -> attempt every message on both channels
+      - failure of one configured channel does not block the other
+      - delivery fails only if every active/configured channel fails
+    """
+
+    def __init__(self) -> None:
+        self.telegram = TelegramClient()
+        self.bale = BaleClient()
+
+        self.telegram_ready = False
+        self.bale_ready = False
+
+    async def open(self) -> None:
+        telegram_error: Optional[Exception] = None
+        bale_error: Optional[Exception] = None
+
+        try:
+            await self.telegram.open()
+            self.telegram_ready = True
+            print(
+                f"[{now_tehran():%H:%M:%S}] "
+                "✅ Short Premium Telegram channel ready"
+            )
+        except Exception as exc:
+            telegram_error = exc
+            print(
+                f"[{now_tehran():%H:%M:%S}] "
+                f"⚠️ Short Premium Telegram unavailable: {exc}"
+            )
+
+        if BALE_CONFIGURED:
+            try:
+                await self.bale.open()
+                self.bale_ready = True
+                print(
+                    f"[{now_tehran():%H:%M:%S}] "
+                    "✅ Short Premium Bale channel ready"
+                )
+            except Exception as exc:
+                bale_error = exc
+                print(
+                    f"[{now_tehran():%H:%M:%S}] "
+                    f"⚠️ Short Premium Bale unavailable: {exc}"
+                )
+
+        elif BALE_CONFIG_INCOMPLETE:
+            print(
+                f"[{now_tehran():%H:%M:%S}] "
+                "⚠️ Short Premium Bale disabled: "
+                "BOT_TOKEN/CHAT_ID configuration is incomplete"
+            )
+
+        else:
+            print(
+                f"[{now_tehran():%H:%M:%S}] "
+                "ℹ️ Short Premium Bale disabled: "
+                "BOT_TOKEN/CHAT_ID not configured yet"
+            )
+
+        if not self.telegram_ready and not self.bale_ready:
+            raise RuntimeError(
+                "No Short Premium notification channel is available. "
+                f"Telegram={telegram_error}; Bale={bale_error}"
+            )
+
+    async def close(self) -> None:
+        try:
+            await self.telegram.close()
+        except Exception as exc:
+            print(
+                f"[{now_tehran():%H:%M:%S}] "
+                f"⚠️ Telegram close failed: {exc}"
+            )
+
+        try:
+            await self.bale.close()
+        except Exception as exc:
+            print(
+                f"[{now_tehran():%H:%M:%S}] "
+                f"⚠️ Bale close failed: {exc}"
+            )
+
+    async def _capture(
+        self,
+        channel: str,
+        awaitable,
+    ):
+        try:
+            await awaitable
+
+            print(
+                f"[{now_tehran():%H:%M:%S}] "
+                f"📨 Short Premium message delivered via {channel}"
+            )
+
+            return None
+
+        except Exception as exc:
+            print(
+                f"[{now_tehran():%H:%M:%S}] "
+                f"⚠️ Short Premium {channel} delivery failed: {exc}"
+            )
+
+            return exc
+
+    async def send(self, message: str) -> None:
+        jobs = [
+            self._capture(
+                "Telegram",
+                self.telegram.send(message),
+            )
+        ]
+
+        # Only attempt Bale delivery when both credentials exist.
+        if BALE_CONFIGURED:
+            jobs.append(
+                self._capture(
+                    "Bale",
+                    self.bale.send(message),
+                )
+            )
+
+        results = await asyncio.gather(*jobs)
+
+        failures = [
+            error
+            for error in results
+            if error is not None
+        ]
+
+        if failures and len(failures) == len(results):
+            raise RuntimeError(
+                "All configured Short Premium notification "
+                "channels failed: "
+                + "; ".join(str(x) for x in failures)
+            )
 
 
 class Repo:
@@ -432,24 +666,24 @@ async def account_report(repo: Repo, title: str) -> str:
 class Notifier:
     def __init__(self) -> None:
         self.repo = Repo()
-        self.tg = TelegramClient()
+        self.sender = DualChannelSender()
         self.state = State(STATE_PATH)
         self.shutdown = asyncio.Event()
 
     async def open(self) -> None:
         self.state.open()
         await self.repo.open()
-        await self.tg.open()
+        await self.sender.open()
 
     async def close(self) -> None:
-        await self.tg.close()
+        await self.sender.close()
         await self.repo.close()
         self.state.close()
 
     async def poll_events(self) -> None:
         for row in await self.repo.pending_events():
             try:
-                await self.tg.send(format_event(row))
+                await self.sender.send(format_event(row))
                 await self.repo.mark_sent(int(row["event_id"]))
             except Exception as exc:
                 await self.repo.mark_error(int(row["event_id"]), str(exc))
@@ -464,13 +698,13 @@ class Notifier:
         if now.time() >= MORNING_TIME:
             key = f"morning:{key_day}"
             if self.state.get(key) != "sent":
-                await self.tg.send(await account_report(self.repo, "🌅 گزارش شروع روز — Short Premium ReyT"))
+                await self.sender.send(await account_report(self.repo, "🌅 گزارش شروع روز — Short Premium ReyT"))
                 self.state.set(key, "sent")
 
         if now.time() >= EOD_TIME:
             key = f"eod:{key_day}"
             if self.state.get(key) != "sent":
-                await self.tg.send(await account_report(self.repo, "🌇 گزارش پایان روز — Short Premium ReyT"))
+                await self.sender.send(await account_report(self.repo, "🌇 گزارش پایان روز — Short Premium ReyT"))
                 self.state.set(key, "sent")
 
     async def watch(self) -> None:
@@ -502,11 +736,11 @@ async def main_async(args: argparse.Namespace) -> None:
     await app.open()
     try:
         if args.test_message:
-            await app.tg.send("✅ بات مستقل Short Straddle / Short Strangle ReyT آماده است.")
+            await app.sender.send("✅ بات مستقل Short Straddle / Short Strangle ReyT آماده است.")
         elif args.report:
-            await app.tg.send(await account_report(app.repo, "📊 گزارش Short Premium ReyT"))
+            await app.sender.send(await account_report(app.repo, "📊 گزارش Short Premium ReyT"))
         else:
-            print(f"[{now_tehran():%H:%M:%S}] short-premium Telegram notifier ready")
+            print(f"[{now_tehran():%H:%M:%S}] short-premium notifier ready | Telegram + optional Bale")
             await app.watch()
     finally:
         await app.close()
