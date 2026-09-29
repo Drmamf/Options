@@ -5,12 +5,14 @@ FINAL_RUNTIME_PROFILE.txt
 README_DEPLOY_FA.txt
 README_FIRST_FA.txt
 bale/ReyT_bale_notifier_unified.py
+bale/ReyT_telegram_primary_notifier.py
 collector/ReyT_collector_unified_optimized.py
 config/FINAL_SETTINGS_REFERENCE.ini
 database/00_create_all_ReyT_mysql_tables_REBUILT_v2_execution_status.sql
 database/01_migrate_ReyT_signal_execution_status_RUN_ONCE.sql
 strategy/ReyT_strategy_engine_unified_1b_execution_status_v2.py
 systemd/reyt-bale.service
+systemd/reyt-notifier.service
 systemd/reyt-collector.service
 systemd/reyt-strategy.service
 tools/apply_final_settings.py

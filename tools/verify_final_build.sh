@@ -5,6 +5,7 @@ echo "========== PYTHON SYNTAX =========="
 /opt/reyt/venv/bin/python -m py_compile /opt/reyt/collector/ReyT_collector_unified_optimized.py
 /opt/reyt/venv/bin/python -m py_compile /opt/reyt/strategy/ReyT_strategy_engine_unified_1b_execution_status_v2.py
 /opt/reyt/venv/bin/python -m py_compile /opt/reyt/bale/ReyT_bale_notifier_unified.py
+/opt/reyt/venv/bin/python -m py_compile /opt/reyt/bale/ReyT_telegram_primary_notifier.py
 echo "SYNTAX_OK"
 
 echo
@@ -58,6 +59,7 @@ grep -n '_option_expiry_fee' /opt/reyt/strategy/ReyT_strategy_engine_unified_1b_
 grep -n 'EOD single-row history append' /opt/reyt/collector/ReyT_collector_unified_optimized.py
 grep -n '_sleep_or_shutdown' /opt/reyt/collector/ReyT_collector_unified_optimized.py | head
 grep -n 'Exactly one Bale message' /opt/reyt/bale/ReyT_bale_notifier_unified.py
+grep -n 'Telegram + Bale DUAL SEND' /opt/reyt/bale/ReyT_telegram_primary_notifier.py
 
 echo
 echo "========== EOD DATETIME SAFETY =========="

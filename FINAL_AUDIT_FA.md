@@ -97,3 +97,10 @@ At 13:00, “one row append” means at most one newly completed `daily_market_d
 
 
 Bale v8: immediate signal notifications are EXECUTED-only. NOT_EXECUTED rows remain in MySQL/CSV/EOD reports and are not sent as immediate messages. Resetting only the Bale SQLite state will resend today's EXECUTED signals once; never delete the Python source to reset notifications.
+
+## 2026-09-29 — Notification routing update
+
+Notification delivery now uses `reyt-notifier.service` as the canonical notifier.
+Every eligible message and document is attempted independently on both Telegram and Bale.
+A failure on one channel is logged without blocking the other channel; delivery fails only when both channels fail.
+The legacy `reyt-bale.service` must remain disabled to avoid duplicate processing of the shared notification state.

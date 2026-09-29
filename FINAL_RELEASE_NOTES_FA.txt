@@ -22,3 +22,10 @@ FINAL LOCKED RELEASE: ReyT — 2026-08-16
 14) Health check اصلاح‌شده است و errors=0 را خطا حساب نمی‌کند؛ Cash نیز از فیلدهای واقعی حساب محاسبه می‌شود.
 
 نسخه‌های قبلی برای Deployment مرجع نیستند؛ این FINAL LOCKED آرشیو مرجع است.
+
+2026-09-29 Notification update:
+- notifier runtime changed to dual delivery: Telegram + Bale.
+- each eligible message/document is attempted on both channels independently.
+- a one-channel failure is logged; only failure of both channels fails the delivery.
+- canonical service is reyt-notifier.service.
+- legacy reyt-bale.service must remain disabled.

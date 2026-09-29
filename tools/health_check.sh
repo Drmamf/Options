@@ -3,7 +3,7 @@ set -euo pipefail
 DB="ghazali1_ReyTOption"
 
 echo "========== SERVICES =========="
-for s in reyt-collector reyt-strategy reyt-bale; do
+for s in reyt-collector reyt-strategy reyt-notifier; do
   printf '%-18s active=%-10s enabled=%s\n' "$s" "$(systemctl is-active "$s.service" || true)" "$(systemctl is-enabled "$s.service" || true)"
 done
 
@@ -34,7 +34,7 @@ SQL
 echo
 echo "========== RECENT ERRORS =========="
 n=0
-for u in reyt-collector.service reyt-strategy.service reyt-bale.service; do
+for u in reyt-collector.service reyt-strategy.service reyt-notifier.service; do
   echo "--- $u ---"
   out="$(journalctl -u "$u" --since '30 minutes ago' --no-pager | grep -Ei 'traceback|exception|critical|failed|error([^s]|$)|errors=[1-9][0-9]*' || true)"
   if [[ -n "$out" ]]; then

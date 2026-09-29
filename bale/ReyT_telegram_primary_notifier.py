@@ -2,8 +2,11 @@
 """
 ReyT notification router.
 
-Primary : Telegram through andro-cfw / Cloudflare Worker
-Fallback: Bale
+Channel 1: Telegram through andro-cfw / Cloudflare Worker
+Channel 2: Bale
+
+Every notification is attempted on both channels.
+A single-channel failure is logged; delivery fails only if both channels fail.
 
 All message formatting, DB reads, scheduling, SQLite state and CSV generation
 remain in ReyT_bale_notifier_unified.py.
@@ -346,10 +349,10 @@ class TelegramClient:
 
 
 # =============================================================================
-# Telegram primary -> Bale fallback
+# Telegram + Bale dual delivery
 # =============================================================================
 
-class PrimaryFallbackClient:
+class DualChannelClient:
     def __init__(
         self,
         telegram: TelegramClient,
@@ -357,6 +360,7 @@ class PrimaryFallbackClient:
     ) -> None:
         self.telegram = telegram
         self.bale = bale
+        self.bale_startup_error: Optional[Exception] = None
 
     async def open(self) -> None:
         try:
@@ -364,7 +368,7 @@ class PrimaryFallbackClient:
 
             print(
                 f"[{legacy.tehran_now():%H:%M:%S}] "
-                "✅ Telegram primary channel ready"
+                "✅ Telegram channel ready"
             )
 
         except Exception as exc:
@@ -375,59 +379,98 @@ class PrimaryFallbackClient:
                 f"⚠️ Telegram unavailable at startup: {exc}"
             )
 
-        # Bale remains ready as fallback.
-        await self.bale.open()
+        try:
+            await self.bale.open()
 
-        print(
-            f"[{legacy.tehran_now():%H:%M:%S}] "
-            "✅ Bale fallback channel ready"
-        )
+            print(
+                f"[{legacy.tehran_now():%H:%M:%S}] "
+                "✅ Bale channel ready"
+            )
+
+        except Exception as exc:
+            self.bale_startup_error = exc
+
+            print(
+                f"[{legacy.tehran_now():%H:%M:%S}] "
+                f"⚠️ Bale unavailable at startup: {exc}"
+            )
 
     async def close(self) -> None:
         try:
             await self.telegram.close()
-        finally:
+        except Exception as exc:
+            print(
+                f"[{legacy.tehran_now():%H:%M:%S}] "
+                f"⚠️ Telegram close failed: {exc}"
+            )
+
+        try:
             await self.bale.close()
+        except Exception as exc:
+            print(
+                f"[{legacy.tehran_now():%H:%M:%S}] "
+                f"⚠️ Bale close failed: {exc}"
+            )
+
+    async def _capture(
+        self,
+        channel: str,
+        operation: str,
+        awaitable,
+    ):
+        try:
+            result = await awaitable
+
+            icon = "📎" if operation == "document" else "📨"
+
+            print(
+                f"[{legacy.tehran_now():%H:%M:%S}] "
+                f"{icon} {operation.capitalize()} delivered via {channel}"
+            )
+
+            return result, None
+
+        except Exception as exc:
+            print(
+                f"[{legacy.tehran_now():%H:%M:%S}] "
+                f"⚠️ {channel} {operation} delivery failed: {exc}"
+            )
+
+            return None, exc
 
     async def send_message(
         self,
         text: str,
     ) -> Dict[str, Any]:
 
-        try:
-            result = await self.telegram.send_message(text)
+        telegram_result, bale_result = await asyncio.gather(
+            self._capture(
+                "Telegram",
+                "message",
+                self.telegram.send_message(text),
+            ),
+            self._capture(
+                "Bale",
+                "message",
+                self.bale.send_message(text),
+            ),
+        )
 
-            print(
-                f"[{legacy.tehran_now():%H:%M:%S}] "
-                "📨 Delivered via Telegram"
+        telegram_data, telegram_error = telegram_result
+        bale_data, bale_error = bale_result
+
+        if telegram_error is not None and bale_error is not None:
+            raise RuntimeError(
+                "Both notification channels failed. "
+                f"Telegram={telegram_error}; "
+                f"Bale={bale_error}"
             )
 
-            return result
-
-        except Exception as telegram_error:
-
-            print(
-                f"[{legacy.tehran_now():%H:%M:%S}] "
-                f"⚠️ Telegram delivery failed; "
-                f"using Bale fallback: {telegram_error}"
-            )
-
-            try:
-                result = await self.bale.send_message(text)
-
-                print(
-                    f"[{legacy.tehran_now():%H:%M:%S}] "
-                    "📨 Delivered via Bale fallback"
-                )
-
-                return result
-
-            except Exception as bale_error:
-                raise RuntimeError(
-                    "Both notification channels failed. "
-                    f"Telegram={telegram_error}; "
-                    f"Bale={bale_error}"
-                ) from bale_error
+        return {
+            "ok": True,
+            "telegram": telegram_data,
+            "bale": bale_data,
+        }
 
     async def send_document(
         self,
@@ -435,46 +478,40 @@ class PrimaryFallbackClient:
         caption: str = "",
     ) -> Dict[str, Any]:
 
-        try:
-            result = await self.telegram.send_document(
-                path,
-                caption=caption,
-            )
-
-            print(
-                f"[{legacy.tehran_now():%H:%M:%S}] "
-                "📎 Document delivered via Telegram"
-            )
-
-            return result
-
-        except Exception as telegram_error:
-
-            print(
-                f"[{legacy.tehran_now():%H:%M:%S}] "
-                f"⚠️ Telegram document failed; "
-                f"using Bale fallback: {telegram_error}"
-            )
-
-            try:
-                result = await self.bale.send_document(
+        telegram_result, bale_result = await asyncio.gather(
+            self._capture(
+                "Telegram",
+                "document",
+                self.telegram.send_document(
                     path,
                     caption=caption,
-                )
+                ),
+            ),
+            self._capture(
+                "Bale",
+                "document",
+                self.bale.send_document(
+                    path,
+                    caption=caption,
+                ),
+            ),
+        )
 
-                print(
-                    f"[{legacy.tehran_now():%H:%M:%S}] "
-                    "📎 Document delivered via Bale fallback"
-                )
+        telegram_data, telegram_error = telegram_result
+        bale_data, bale_error = bale_result
 
-                return result
+        if telegram_error is not None and bale_error is not None:
+            raise RuntimeError(
+                "Both document channels failed. "
+                f"Telegram={telegram_error}; "
+                f"Bale={bale_error}"
+            )
 
-            except Exception as bale_error:
-                raise RuntimeError(
-                    "Both document channels failed. "
-                    f"Telegram={telegram_error}; "
-                    f"Bale={bale_error}"
-                ) from bale_error
+        return {
+            "ok": True,
+            "telegram": telegram_data,
+            "bale": bale_data,
+        }
 
 
 # =============================================================================
@@ -485,7 +522,7 @@ class ReyTNotifier(legacy.ReyTBaleNotifier):
     def __init__(self) -> None:
         super().__init__()
 
-        bale_fallback = self.bale
+        bale_channel = self.bale
 
         telegram = TelegramClient(
             TELEGRAM_BOT_TOKEN,
@@ -495,11 +532,11 @@ class ReyTNotifier(legacy.ReyTBaleNotifier):
         # Existing notifier code calls self.bale.send_message()
         # and self.bale.send_document().
         #
-        # We deliberately replace only that transport object.
-        # Formatting and business logic remain untouched.
-        self.bale = PrimaryFallbackClient(
+        # Replace only the transport object. Every delivery is
+        # attempted independently on both Telegram and Bale.
+        self.bale = DualChannelClient(
             telegram,
-            bale_fallback,
+            bale_channel,
         )
 
     async def open(self) -> None:
@@ -508,7 +545,7 @@ class ReyTNotifier(legacy.ReyTBaleNotifier):
         print(
             f"[{legacy.tehran_now():%H:%M:%S}] "
             "✅ Notification routing: "
-            "Telegram PRIMARY -> Bale FALLBACK"
+            "Telegram + Bale DUAL SEND"
         )
 
 

@@ -6,10 +6,10 @@ echo "WARNING: DESTRUCTIVE FULL RESET — this deletes market/history tables too
 echo "Preferred normal reset: /opt/reyt/tools/reset_trading_state_preserve_market.sh"
 
 echo "Stopping ReyT services..."
-systemctl stop reyt-bale.service || true
+systemctl stop reyt-notifier.service || true
 systemctl stop reyt-strategy.service || true
 systemctl stop reyt-collector.service || true
-systemctl reset-failed reyt-bale.service reyt-strategy.service reyt-collector.service || true
+systemctl reset-failed reyt-notifier.service reyt-strategy.service reyt-collector.service || true
 
 echo "Truncating ALL ReyT runtime/data tables in ${DB}..."
 mysql "$DB" <<'SQL'
@@ -36,7 +36,10 @@ TRUNCATE TABLE underlying_assets;
 SET FOREIGN_KEY_CHECKS=1;
 SQL
 
-rm -f /opt/reyt/bale/reyt_bale_notifier_state.sqlite3 \
+rm -f /var/lib/reyt/bale/reyt_bale_notifier_state.sqlite3 \
+      /var/lib/reyt/bale/reyt_bale_notifier_state.sqlite3-shm \
+      /var/lib/reyt/bale/reyt_bale_notifier_state.sqlite3-wal \
+      /opt/reyt/bale/reyt_bale_notifier_state.sqlite3 \
       /opt/reyt/bale/reyt_bale_notifier_state.sqlite3-shm \
       /opt/reyt/bale/reyt_bale_notifier_state.sqlite3-wal
 

@@ -4,10 +4,10 @@ DB="ghazali1_ReyTOption"
 PY="/opt/reyt/venv/bin/python"
 STRAT_DIR="/opt/reyt/strategy"
 
-printf '%s\n' "Stopping Strategy and Bale (Collector/history remain untouched)..."
-systemctl stop reyt-bale.service || true
+printf '%s\n' "Stopping Strategy and Notifier (Collector/history remain untouched)..."
+systemctl stop reyt-notifier.service || true
 systemctl stop reyt-strategy.service || true
-systemctl reset-failed reyt-bale.service reyt-strategy.service || true
+systemctl reset-failed reyt-notifier.service reyt-strategy.service || true
 
 printf '%s\n' "Resetting ONLY paper/signal/runtime trading state in ${DB}..."
 mysql "$DB" <<'SQL'
@@ -26,7 +26,10 @@ TRUNCATE TABLE paper_strategy_account;
 SET FOREIGN_KEY_CHECKS=1;
 SQL
 
-rm -f /opt/reyt/bale/reyt_bale_notifier_state.sqlite3 \
+rm -f /var/lib/reyt/bale/reyt_bale_notifier_state.sqlite3 \
+      /var/lib/reyt/bale/reyt_bale_notifier_state.sqlite3-shm \
+      /var/lib/reyt/bale/reyt_bale_notifier_state.sqlite3-wal \
+      /opt/reyt/bale/reyt_bale_notifier_state.sqlite3 \
       /opt/reyt/bale/reyt_bale_notifier_state.sqlite3-shm \
       /opt/reyt/bale/reyt_bale_notifier_state.sqlite3-wal
 

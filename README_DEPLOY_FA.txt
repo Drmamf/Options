@@ -1,6 +1,6 @@
 ReyT FINAL CLEAN build v2 - 2026-08-15
 
-این بسته شامل سورس کامل Collector / Strategy / Bale است؛ patch جداگانه لازم نیست.
+این بسته شامل سورس کامل Collector / Strategy / Telegram+Bale Notifier است؛ patch جداگانه لازم نیست.
 
 تنظیمات کلیدی v2:
 - Paper capital = 100M toman
@@ -22,7 +22,7 @@ ReyT FINAL CLEAN build v2 - 2026-08-15
 6) Collector را start کن و تا Initial one-year history bootstrap complete صبر کن.
 7) Strategy را یک بار --once --no-auto-trade اجرا کن و counts را چک کن.
 8) Strategy service را start کن.
-9) پس از یک scan موفق، Bale service را start کن.
+9) پس از یک scan موفق، reyt-notifier.service را start کن؛ reyt-bale.service legacy باید disabled بماند.
 
 
 Build v5 portfolio rule:

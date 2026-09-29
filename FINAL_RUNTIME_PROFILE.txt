@@ -42,9 +42,11 @@ FEES
 - option sell = 0.103%
 - option expiry/exercise = 0.05%
 
-BALE
+NOTIFICATIONS — TELEGRAM + BALE
 - BALE_SIGNAL_MODE = executed_only
-- immediate messages = EXECUTED only
+- every eligible notification is attempted independently on both Telegram and Bale
+- failure of one channel is logged; the notification is considered failed only if both channels fail
+- immediate messages = EXECUTED only on both Telegram and Bale
 - NOT_EXECUTED remains in MySQL / CSV / EOD analytics and is not pushed immediately
 - 08:30 Tehran = open-position/account snapshot on market days
 - 13:00 Tehran = end-of-day snapshot + CSV on market days
@@ -54,7 +56,8 @@ MARKET / SERVICES
 - market days = Saturday through Wednesday
 - market hours = 09:00..12:30 Tehran
 - Collector EOD history action = 13:00 Tehran
-- systemd services = reyt-collector, reyt-strategy, reyt-bale
+- active systemd services = reyt-collector, reyt-strategy, reyt-notifier
+- reyt-bale is legacy and must remain disabled
 - services are intended to be enabled at boot
 
 RESET POLICY

@@ -13,6 +13,7 @@ FILES=(
   "strategy/ReyT_strategy_engine_unified_1b_execution_status_v2.py"
   "strategy/ReyT_strategy_engine_covered_call_only.py"
   "bale/ReyT_bale_notifier_unified.py"
+  "bale/ReyT_telegram_primary_notifier.py"
 )
 
 if [[ $EUID -ne 0 ]]; then
@@ -73,7 +74,7 @@ rollback() {
 
   systemctl restart reyt-collector.service || true
   systemctl restart reyt-strategy.service || true
-  systemctl restart reyt-bale.service || true
+  systemctl restart reyt-notifier.service || true
 
   echo "ROLLBACK_FINISHED"
   exit 1
@@ -96,13 +97,13 @@ done
 # Restart only services whose code changed.
 COLLECTOR_CHANGED=0
 STRATEGY_CHANGED=0
-BALE_CHANGED=0
+NOTIFIER_CHANGED=0
 
 for rel in "${CHANGED[@]}"; do
   case "$rel" in
     collector/*) COLLECTOR_CHANGED=1 ;;
     strategy/*) STRATEGY_CHANGED=1 ;;
-    bale/*) BALE_CHANGED=1 ;;
+    bale/*) NOTIFIER_CHANGED=1 ;;
   esac
 done
 
@@ -114,8 +115,8 @@ if [[ $STRATEGY_CHANGED -eq 1 ]]; then
   systemctl restart reyt-strategy.service
 fi
 
-if [[ $BALE_CHANGED -eq 1 ]]; then
-  systemctl restart reyt-bale.service
+if [[ $NOTIFIER_CHANGED -eq 1 ]]; then
+  systemctl restart reyt-notifier.service
 fi
 
 sleep 3
@@ -128,8 +129,8 @@ if [[ $STRATEGY_CHANGED -eq 1 ]]; then
   systemctl is-active --quiet reyt-strategy.service
 fi
 
-if [[ $BALE_CHANGED -eq 1 ]]; then
-  systemctl is-active --quiet reyt-bale.service
+if [[ $NOTIFIER_CHANGED -eq 1 ]]; then
+  systemctl is-active --quiet reyt-notifier.service
 fi
 
 trap - ERR

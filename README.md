@@ -8,10 +8,11 @@ ReyT FINAL LOCKED — 2026-08-16
 - collector/ReyT_collector_unified_optimized.py
 - strategy/ReyT_strategy_engine_unified_1b_execution_status_v2.py
 - bale/ReyT_bale_notifier_unified.py
+- bale/ReyT_telegram_primary_notifier.py
 - database/ اسکریپت ساخت جداول و migration
-- systemd/ سه سرویس دائمی
+- systemd/ سرویس‌های Collector، Strategy و Dual Notifier
 - config/FINAL_SETTINGS_REFERENCE.ini مرجع تنظیمات بدون Secret
-- tools/ نصب، deploy، verify، reset، health-check، dry-run و تست Bale
+- tools/ نصب، deploy، verify، reset، health-check، dry-run و تست Telegram + Bale
 
 تنظیمات قفل‌شده نهایی:
 - Paper capital: 1,000,000,000 تومان
@@ -27,7 +28,7 @@ ReyT FINAL LOCKED — 2026-08-16
 - Mark book max age: 900s
 - History context: 252 rows; minimum returns: 90; no pruning
 - Greeks risk-free: 40%
-- Bale immediate notifications: EXECUTED only
+- Immediate notifications: EXECUTED only; every notification is attempted on both Telegram and Bale
 - NOT_EXECUTED: فقط DB/CSV/EOD، بدون Push فوری
 - 08:30 snapshot و 13:00 snapshot + CSV
 
@@ -41,7 +42,7 @@ Deploy روی VPS موجود:
 - Secretهای موجود settings.ini را حفظ می‌کند
 - تمام تنظیمات نهایی را اعمال می‌کند
 - verify را اجرا می‌کند
-- هر سه سرویس را enable + restart می‌کند
+- سرویس‌های reyt-collector، reyt-strategy و reyt-notifier را enable + restart می‌کند و reyt-bale legacy را غیرفعال نگه می‌دارد
 
 Reset پیشنهادی بدون حذف History/Market Data:
   sudo /opt/reyt/tools/reset_trading_state_preserve_market.sh
@@ -49,7 +50,7 @@ Reset پیشنهادی بدون حذف History/Market Data:
 Health check:
   sudo /opt/reyt/tools/health_check.sh
 
-Bale connectivity test:
+Telegram + Bale connectivity test:
   sudo /opt/reyt/tools/test_bale.sh
 
 Secrets عمداً داخل ZIP نیستند:
