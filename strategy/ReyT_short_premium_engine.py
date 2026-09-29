@@ -721,6 +721,119 @@ class ShortPremiumEngine:
         call = min(call_candidates, key=lambda q: q.strike)
         return put, call, "OK"
 
+    def _entry_reject_metrics(
+        self,
+        strategy: str,
+        u: Mapping[str, Any],
+        put: OptionQuote,
+        call: OptionQuote,
+    ) -> Dict[str, Any]:
+        """Capture diagnostic entry metrics without changing execution decisions."""
+        spot = dec(u["spot"])
+        details: Dict[str, Any] = {
+            "put_bid_rial": str(put.bid),
+            "put_ask_rial": str(put.ask),
+            "put_contract_size": put.contract_size,
+            "put_bid_capacity": put.bid_capacity,
+            "put_ask_capacity": put.ask_capacity,
+            "call_bid_rial": str(call.bid),
+            "call_ask_rial": str(call.ask),
+            "call_contract_size": call.contract_size,
+            "call_bid_capacity": call.bid_capacity,
+            "call_ask_capacity": call.ask_capacity,
+        }
+        metrics: Dict[str, Any] = {"details": details}
+
+        if spot <= 0 or not valid_quote(put) or not valid_quote(call):
+            return metrics
+
+        pair_capacity = min(put.bid_capacity, call.bid_capacity)
+        put_margin = short_margin_per_contract(put, spot)
+        call_margin = short_margin_per_contract(call, spot)
+        pair_margin = put_margin + call_margin
+        max_qty_margin = int(MAX_POSITION_MARGIN_RIAL // pair_margin) if pair_margin > 0 else 0
+        desired_qty = min(pair_capacity, max_qty_margin)
+
+        gross_pair = fee_pair = net_pair = D0
+        for q in (put, call):
+            gross, f, net = sell_cash(q, 1)
+            gross_pair += gross
+            fee_pair += f
+            net_pair += net
+
+        min_qty = 0
+        if gross_pair > 0:
+            min_qty = max(
+                1,
+                int(
+                    (MIN_POSITION_VALUE_RIAL / gross_pair).to_integral_value(
+                        rounding=ROUND_CEILING
+                    )
+                ),
+            )
+
+        ratio = pct(net_pair / pair_margin * D100) if pair_margin > 0 else D0
+        metrics["net_premium_margin_pct"] = ratio
+
+        details.update(
+            {
+                "pair_capacity": pair_capacity,
+                "put_margin_per_contract_rial": str(put_margin),
+                "call_margin_per_contract_rial": str(call_margin),
+                "pair_margin_per_contract_rial": str(pair_margin),
+                "max_qty_margin": max_qty_margin,
+                "desired_qty": desired_qty,
+                "min_qty": min_qty,
+                "gross_premium_per_pair_rial": str(money(gross_pair)),
+                "sell_fees_per_pair_rial": str(money(fee_pair)),
+                "net_premium_per_pair_rial": str(money(net_pair)),
+                "net_premium_margin_pct": str(ratio),
+            }
+        )
+
+        synthetic_legs = [
+            {
+                "option_type": "PUT",
+                "strike": put.strike,
+                "contract_size": put.contract_size,
+                "qty": 1,
+            },
+            {
+                "option_type": "CALL",
+                "strike": call.strike,
+                "contract_size": call.contract_size,
+                "qty": 1,
+            },
+        ]
+        lower, upper = full_position_breakevens(net_pair, synthetic_legs)
+        details["lower_breakeven_rial"] = str(lower or D0)
+        details["upper_breakeven_rial"] = str(upper or D0)
+
+        stress_pct = STRADDLE_STRESS_PCT if strategy == "SHORT_STRADDLE" else STRANGLE_STRESS_PCT
+        stress_down = spot * (D1 - stress_pct / D100)
+        stress_up = spot * (D1 + stress_pct / D100)
+        details["stress_pct"] = str(stress_pct)
+        details["stress_down_spot_rial"] = str(money(stress_down))
+        details["stress_up_spot_rial"] = str(money(stress_up))
+        details["stress_down_pnl_per_pair_rial"] = str(
+            money(terminal_pnl(net_pair, synthetic_legs, stress_down))
+        )
+        details["stress_up_pnl_per_pair_rial"] = str(
+            money(terminal_pnl(net_pair, synthetic_legs, stress_up))
+        )
+
+        immediate_close_cost = D0
+        for q in (put, call):
+            buy_gross, buy_fee, _ = buy_cash(q.ask, q.contract_size, 1)
+            immediate_close_cost += buy_gross + buy_fee
+        immediate_loss = max(D0, immediate_close_cost - net_pair)
+        immediate_loss_pct = (
+            pct(immediate_loss / net_pair * D100) if net_pair > 0 else D100
+        )
+        details["immediate_close_cost_per_pair_rial"] = str(money(immediate_close_cost))
+        details["immediate_close_loss_pct"] = str(immediate_loss_pct)
+        return metrics
+
     def _entry_candidate(
         self,
         strategy: str,
@@ -1798,6 +1911,7 @@ class ShortPremiumEngine:
                 await self._insert_signal(
                     db, strategy, now, int(account["account_id"]), u,
                     put, call, "REJECTED", reason or select_reason,
+                    metrics=self._entry_reject_metrics(strategy, u, put, call),
                 )
                 continue
             out.append(candidate)
