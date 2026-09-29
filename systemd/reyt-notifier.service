@@ -13,6 +13,7 @@ WorkingDirectory=/opt/reyt-github/bale
 Environment=HOME=/var/lib/reyt
 Environment=PYTHONUNBUFFERED=1
 Environment=OPTIONS_CONFIG_FILE=/etc/reyt/bale/settings.ini
+Environment=PAPER_ACCOUNT_NAMES=paper_100m_itm10,paper_100m_pp_itm10
 Environment=TELEGRAM_CONFIG_FILE=/etc/reyt/telegram/settings.ini
 Environment=TELEGRAM_CFW_SESSION=/var/lib/reyt/telegram/cfw.session
 
