@@ -125,9 +125,10 @@ SCAN_INTERVAL_SECONDS = _int("SCAN_INTERVAL_SECONDS", 300, 60)
 ENTRY_BUCKET_PCT = _dec("ENTRY_BUCKET_PCT", "70")
 ADJUSTMENT_BUCKET_PCT = _dec("ADJUSTMENT_BUCKET_PCT", "30")
 
-MIN_POSITION_VALUE_RIAL = _dec("MIN_POSITION_VALUE_TOMAN", "1000000") * TOMAN_TO_RIAL
-MAX_POSITION_MARGIN_RIAL = _dec("MAX_POSITION_MARGIN_TOMAN", "5000000") * TOMAN_TO_RIAL
+MIN_POSITION_VALUE_RIAL = _dec("MIN_POSITION_VALUE_TOMAN", "500000") * TOMAN_TO_RIAL
+MAX_POSITION_MARGIN_RIAL = _dec("MAX_POSITION_MARGIN_TOMAN", "10000000") * TOMAN_TO_RIAL
 MIN_NET_PREMIUM_TO_MARGIN_PCT = _dec("MIN_NET_PREMIUM_TO_MARGIN_PCT", "10")
+MAX_IMMEDIATE_CLOSE_LOSS_PCT = _dec("MAX_IMMEDIATE_CLOSE_LOSS_PCT", "50")
 
 STRADDLE_STRESS_PCT = _dec("STRADDLE_STRESS_PCT", "20")
 STRANGLE_STRESS_PCT = _dec("STRANGLE_STRESS_PCT", "10")
@@ -243,6 +244,8 @@ def validate_configuration() -> None:
         raise RuntimeError("Entry + Adjustment bucket percentages must equal 100.")
     if MIN_POSITION_VALUE_RIAL <= 0 or MAX_POSITION_MARGIN_RIAL <= 0:
         raise RuntimeError("Position value/margin limits must be positive.")
+    if MAX_IMMEDIATE_CLOSE_LOSS_PCT < 0:
+        raise RuntimeError("MAX_IMMEDIATE_CLOSE_LOSS_PCT must be non-negative.")
     if MARGIN_A_PCT <= 0 or MARGIN_B_PCT <= 0:
         raise RuntimeError("Margin parameters must be positive.")
     if OPTION_VOLUME_MODE not in {"auto", "contracts", "units"}:
@@ -792,6 +795,21 @@ class ShortPremiumEngine:
         pnl_up = terminal_pnl(net_pair, synthetic_legs, stress_up)
         if pnl_down < 0 or pnl_up < 0:
             return None, "STRESS_FILTER_FAILED"
+
+        # Final entry-quality gate: do not open a position whose immediate
+        # executable buyback at current Best Ask would consume too much of
+        # the net premium credit. Keeping this after the existing filters
+        # preserves their rejection reasons for diagnostics.
+        immediate_close_cost = D0
+        for q in (put, call):
+            buy_gross, buy_fee, _ = buy_cash(q.ask, q.contract_size, 1)
+            immediate_close_cost += buy_gross + buy_fee
+        immediate_loss = max(D0, immediate_close_cost - net_pair)
+        immediate_loss_pct = (
+            pct(immediate_loss / net_pair * D100) if net_pair > 0 else D100
+        )
+        if immediate_loss_pct > MAX_IMMEDIATE_CLOSE_LOSS_PCT:
+            return None, "IMMEDIATE_CLOSE_LOSS_ABOVE_MAX"
 
         return (
             EntryCandidate(
