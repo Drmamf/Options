@@ -681,6 +681,12 @@ class Notifier:
         self.state.close()
 
     async def poll_events(self) -> None:
+        # Never deliver trading events on Tehran market holidays/weekends
+        # (Thursday/Friday are excluded by is_market_day). Pending events stay
+        # queued and can be delivered on the next market day.
+        if not is_market_day(now_tehran().date()):
+            return
+
         for row in await self.repo.pending_events():
             try:
                 await self.sender.send(format_event(row))
