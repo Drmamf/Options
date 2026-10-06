@@ -514,6 +514,32 @@ class Repo:
             (account_id,),
         )
 
+    async def open_premium_summary(self, account_id: int) -> Dict[str, Any]:
+        rows = await self.fetchall(
+            """
+            SELECT
+              COALESCE(SUM(COALESCE(f.sell_gross_rial,0)),0) AS sell_gross_rial,
+              COALESCE(SUM(COALESCE(f.sell_net_rial,0)),0) AS sell_net_rial,
+              COALESCE(SUM(COALESCE(p.current_close_cost_rial,0)),0) AS close_cost_rial
+            FROM short_premium_positions p
+            LEFT JOIN (
+                SELECT
+                  position_id,
+                  SUM(CASE WHEN action='SELL' THEN gross_value_rial ELSE 0 END) AS sell_gross_rial,
+                  SUM(CASE WHEN action='SELL' THEN net_cashflow_rial ELSE 0 END) AS sell_net_rial
+                FROM short_premium_fills
+                GROUP BY position_id
+            ) f ON f.position_id=p.position_id
+            WHERE p.account_id=%s AND p.status<>'CLOSED'
+            """,
+            (account_id,),
+        )
+        return rows[0] if rows else {
+            "sell_gross_rial": 0,
+            "sell_net_rial": 0,
+            "close_cost_rial": 0,
+        }
+
 
 def details(row: Mapping[str, Any]) -> Dict[str, Any]:
     raw = row.get("details_json")
@@ -640,6 +666,7 @@ async def account_report(repo: Repo, title: str) -> str:
     for a in await repo.accounts():
         account_id = int(a["account_id"])
         positions = await repo.open_positions(account_id)
+        premium = await repo.open_premium_summary(account_id)
         lines.extend(
             [
                 "",
@@ -648,6 +675,9 @@ async def account_report(repo: Repo, title: str) -> str:
                 f"💼 سرمایه اولیه: {toman(a['initial_equity_rial'])} تومان",
                 f"📊 Equity فعلی: {toman(a['current_equity_rial'])} تومان",
                 f"📈 P&L تحقق‌یافته: {toman(a['realized_pnl_rial'])} تومان",
+                f"💰 Premium ناخالص دریافتی باز: {toman(premium['sell_gross_rial'])} تومان",
+                f"💵 Premium خالص دریافتی باز: {toman(premium['sell_net_rial'])} تومان",
+                f"🚪 هزینه فعلی بستن پوزیشن‌های باز: {toman(premium['close_cost_rial'])} تومان",
                 f"📉 P&L شناور: {toman(a['unrealized_pnl_rial'])} تومان",
                 f"🟦 هدف Entry 70٪: {toman(a['entry_bucket_target_rial'])} تومان",
                 f"🔒 Entry درگیر: {toman(a['entry_capital_used_rial'])} تومان",
