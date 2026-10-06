@@ -506,6 +506,7 @@ class Repo:
         return await self.fetchall(
             """
             SELECT position_id,underlying_symbol,expiry_date,status,current_margin_rial,
+                   initial_spot_rial,current_underlying_price_rial,
                    lower_breakeven_rial,upper_breakeven_rial,net_pnl_rial
             FROM short_premium_positions
             WHERE account_id=%s AND status<>'CLOSED'
@@ -688,10 +689,16 @@ async def account_report(repo: Repo, title: str) -> str:
             ]
         )
         for p in positions[:20]:
-            lines.append(
-                f"• #{p['position_id']} {p['underlying_symbol']} {p['expiry_date']} "
-                f"[{p['status']}] | Margin {toman(p['current_margin_rial'])} | "
-                f"P/L {toman(p['net_pnl_rial'])}"
+            lines.extend(
+                [
+                    f"• #{p['position_id']} {p['underlying_symbol']} {p['expiry_date']} "
+                    f"[{p['status']}] | Margin {toman(p['current_margin_rial'])} | "
+                    f"P/L {toman(p['net_pnl_rial'])}",
+                    f"  ↳ Spot ورود: {toman(p['initial_spot_rial'])} تومان | "
+                    f"Spot فعلی: {toman(p['current_underlying_price_rial'])} تومان",
+                    f"  ↳ مرز ضرر پایین: {toman(p['lower_breakeven_rial'])} تومان | "
+                    f"مرز ضرر بالا: {toman(p['upper_breakeven_rial'])} تومان",
+                ]
             )
     return "\n".join(lines)
 
