@@ -439,7 +439,10 @@ class Repo:
             charset=MYSQL_CHARSET,
             minsize=1,
             maxsize=2,
-            autocommit=False,
+            # Notifier reads must always see the latest engine commits.
+            # With autocommit=False, long-lived pooled SELECT transactions can
+            # remain on an old REPEATABLE READ snapshot for hours or days.
+            autocommit=True,
             connect_timeout=MYSQL_CONNECT_TIMEOUT,
             cursorclass=aiomysql.DictCursor,
             init_command=f"SET time_zone = '{MYSQL_TIME_ZONE}'",
