@@ -734,7 +734,7 @@ async def account_report(repo: Repo, title: str) -> str:
                     f"• #{p['position_id']} {p['underlying_symbol']} {p['expiry_date']} "
                     f"[{p['status']}] | P/L {toman(p['net_pnl_rial'])}",
                     f"  ↳ ورود {toman(p['initial_spot_rial'])} | فعلی {toman(p['current_underlying_price_rial'])} "
-                    f"| ضرر↓ {toman(p['lower_breakeven_rial'])} | ضرر↑ {toman(p['upper_breakeven_rial'])}",
+                    f"| BE سررسید {toman(p['lower_breakeven_rial'])} ↔ {toman(p['upper_breakeven_rial'])}",
                 ]
             )
     return "\n".join(lines)
