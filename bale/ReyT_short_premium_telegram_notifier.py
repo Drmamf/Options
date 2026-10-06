@@ -183,31 +183,75 @@ class TelegramClient:
             await self.session.close()
             self.session = None
 
+    @staticmethod
+    def _split_message(message: str, limit: int = 3800) -> list[str]:
+        """Split long Telegram messages on line boundaries below Telegram's limit."""
+        if len(message) <= limit:
+            return [message]
+
+        chunks: list[str] = []
+        current = ""
+
+        for line in message.splitlines():
+            candidate = line if not current else f"{current}\n{line}"
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+
+            if current:
+                chunks.append(current)
+                current = ""
+
+            # Safety fallback for an unusually long single line.
+            while len(line) > limit:
+                chunks.append(line[:limit])
+                line = line[limit:]
+            current = line
+
+        if current:
+            chunks.append(current)
+
+        return chunks
+
     async def send(self, message: str) -> None:
         if not self.session:
             raise RuntimeError("Telegram client is closed.")
         url = f"{self.api_prefix}/sendMessage"
-        payload = {"chat_id": CHAT_ID, "text": message}
-        last: Optional[Exception] = None
-        for attempt in range(1, HTTP_RETRIES + 1):
-            try:
-                async with self.session.post(url, json=payload) as resp:
-                    body = await resp.text()
-                    if resp.status >= 500 or resp.status == 429:
-                        if attempt < HTTP_RETRIES:
-                            await asyncio.sleep(min(10, attempt * 2))
-                            continue
-                    if resp.status >= 400:
-                        raise RuntimeError(f"Telegram HTTP {resp.status}: {body[:500]}")
-                    data = json.loads(body)
-                    if not data.get("ok"):
-                        raise RuntimeError(f"Telegram send failed: {data}")
-                    return
-            except Exception as exc:
-                last = exc
-                if attempt < HTTP_RETRIES:
-                    await asyncio.sleep(min(10, attempt * 2))
-        raise RuntimeError(f"Telegram send failed after retries: {last}")
+        chunks = self._split_message(message)
+
+        for index, chunk in enumerate(chunks, start=1):
+            text = chunk
+            if len(chunks) > 1:
+                text = f"📄 بخش {index}/{len(chunks)}\n{chunk}"
+
+            payload = {"chat_id": CHAT_ID, "text": text}
+            last: Optional[Exception] = None
+
+            for attempt in range(1, HTTP_RETRIES + 1):
+                try:
+                    async with self.session.post(url, json=payload) as resp:
+                        body = await resp.text()
+                        if resp.status >= 500 or resp.status == 429:
+                            if attempt < HTTP_RETRIES:
+                                await asyncio.sleep(min(10, attempt * 2))
+                                continue
+                        if resp.status >= 400:
+                            raise RuntimeError(f"Telegram HTTP {resp.status}: {body[:500]}")
+                        data = json.loads(body)
+                        if not data.get("ok"):
+                            raise RuntimeError(f"Telegram send failed: {data}")
+                        last = None
+                        break
+                except Exception as exc:
+                    last = exc
+                    if attempt < HTTP_RETRIES:
+                        await asyncio.sleep(min(10, attempt * 2))
+
+            if last is not None:
+                raise RuntimeError(
+                    f"Telegram send failed after retries on chunk "
+                    f"{index}/{len(chunks)}: {last}"
+                )
 
 
 class BaleClient:
