@@ -717,16 +717,12 @@ async def account_report(repo: Repo, title: str) -> str:
                 "",
                 f"📌 {strategy_fa(a['strategy_code'])}",
                 f"🧾 حساب: {a['account_name']}",
-                f"💼 سرمایه اولیه: {toman(a['initial_equity_rial'])} تومان",
                 f"📊 Equity فعلی: {toman(a['current_equity_rial'])} تومان",
                 f"📈 P&L تحقق‌یافته: {toman(a['realized_pnl_rial'])} تومان",
-                f"💰 Premium ناخالص دریافتی باز: {toman(premium['sell_gross_rial'])} تومان",
-                f"💵 Premium خالص دریافتی باز: {toman(premium['sell_net_rial'])} تومان",
-                f"🚪 هزینه فعلی بستن پوزیشن‌های باز: {toman(premium['close_cost_rial'])} تومان",
                 f"📉 P&L شناور: {toman(a['unrealized_pnl_rial'])} تومان",
-                f"🟦 هدف Entry 70٪: {toman(a['entry_bucket_target_rial'])} تومان",
+                f"💵 Premium خالص باز: {toman(premium['sell_net_rial'])} تومان",
+                f"🚪 هزینه بستن فعلی: {toman(premium['close_cost_rial'])} تومان",
                 f"🔒 Entry درگیر: {toman(a['entry_capital_used_rial'])} تومان",
-                f"🟨 هدف Adjustment 30٪: {toman(a['adjustment_bucket_target_rial'])} تومان",
                 f"🛠 Adjustment درگیر: {toman(a['adjustment_capital_used_rial'])} تومان",
                 f"📌 پوزیشن باز/درحال خروج: {len(positions)}",
                 f"📉 Drawdown: {num(a['drawdown_pct'])}٪",
@@ -736,12 +732,9 @@ async def account_report(repo: Repo, title: str) -> str:
             lines.extend(
                 [
                     f"• #{p['position_id']} {p['underlying_symbol']} {p['expiry_date']} "
-                    f"[{p['status']}] | Margin {toman(p['current_margin_rial'])} | "
-                    f"P/L {toman(p['net_pnl_rial'])}",
-                    f"  ↳ Spot ورود: {toman(p['initial_spot_rial'])} تومان | "
-                    f"Spot فعلی: {toman(p['current_underlying_price_rial'])} تومان",
-                    f"  ↳ مرز ضرر پایین: {toman(p['lower_breakeven_rial'])} تومان | "
-                    f"مرز ضرر بالا: {toman(p['upper_breakeven_rial'])} تومان",
+                    f"[{p['status']}] | P/L {toman(p['net_pnl_rial'])}",
+                    f"  ↳ ورود {toman(p['initial_spot_rial'])} | فعلی {toman(p['current_underlying_price_rial'])} "
+                    f"| ضرر↓ {toman(p['lower_breakeven_rial'])} | ضرر↑ {toman(p['upper_breakeven_rial'])}",
                 ]
             )
     return "\n".join(lines)
